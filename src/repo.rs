@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ini::Ini;
 use std::{
-    fs::read_to_string,
+    fs::{self, read_to_string},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -14,10 +14,19 @@ pub(crate) struct ConfigSectionMissing<'a>(&'a str);
 #[error("`{0}` must be defined in the repository config")]
 pub(crate) struct ConfigKeyMissing<'a>(&'a str);
 
+#[derive(Error, Debug)]
+#[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
+pub(crate) struct PandocNotInstalled;
+
+#[derive(Error, Debug)]
+#[error("pandoc returned unexpected output")]
+pub(crate) struct PandocOutputError;
+
 #[derive(Debug)]
 pub(crate) struct Repo {
     author: String,
     link_pattern: String,
+    packages: Vec<Package>,
 }
 
 impl Repo {
@@ -34,10 +43,29 @@ impl Repo {
             .get("link_pattern")
             .ok_or(ConfigKeyMissing("link_pattern"))?;
 
+        let packages: Result<Vec<Package>> = Self::get_package_paths(dir)?
+            .iter()
+            .map(|p| Package::read(&p))
+            .collect();
+        let packages = packages?;
+
         Ok(Self {
             author: author.into(),
             link_pattern: link_pattern.into(),
+            packages,
         })
+    }
+
+    fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut paths = vec![];
+        for path in fs::read_dir(dir)? {
+            let path = path?;
+            let is_dir = path.metadata()?.is_dir();
+            if is_dir {
+                paths.push(path.path());
+            }
+        }
+        Ok(paths)
     }
 }
 
@@ -77,12 +105,27 @@ impl Package {
     fn read_description(dir: &Path) -> Result<Option<String>> {
         let rtf_path = dir.join("README.rtf");
         if rtf_path.exists() {
-            return Ok(Some(read_to_string(rtf_path)?));
+            return Ok(Some(fs::read_to_string(rtf_path)?));
         }
 
         let md_path = dir.join("README.md");
         if md_path.exists() {
-            todo!("implement pandoc handling")
+            let mut pandoc = pandoc::new();
+            // TODO: Allow overriding pandoc path
+            // pandoc.add_pandoc_path_hint(custom_path);
+            pandoc.add_input(&md_path);
+            pandoc.add_option(pandoc::PandocOption::Standalone);
+            pandoc.set_output(pandoc::OutputKind::Pipe);
+            pandoc.set_output_format(pandoc::OutputFormat::Rtf, vec![]);
+            // pandoc::PandocError::PandocNotFound
+            let output = pandoc.execute().map_err(|e| match e {
+                pandoc::PandocError::PandocNotFound => anyhow::Error::from(PandocNotInstalled),
+                e => e.into(),
+            })?;
+            let pandoc::PandocOutput::ToBuffer(output) = output else {
+                return Err(PandocOutputError.into());
+            };
+            return Ok(Some(output));
         }
 
         Ok(None)
