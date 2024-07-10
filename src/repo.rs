@@ -210,6 +210,7 @@ pub(crate) struct PackageVersion {
     name: String,
     time: DateTime<chrono::Utc>,
     changelog: Option<String>,
+    sources: Vec<Source>
 }
 
 impl PackageVersion {
@@ -284,11 +285,30 @@ impl PackageVersion {
 
         let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
 
+        let sources: Vec<_> = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Ok(entry) => {
+                    let path = entry.into_path();
+                    // TODO: Determine sections
+                    Some(Source {
+                        path,
+                        sections: vec![],
+                    })
+                }
+                Err(e) => {
+                    println!("Error when scanning sources: {e}");
+                    None
+                }
+            })
+            .collect();
+
         Ok(Self {
             path: dir.into(),
             name: name.into(),
             time,
             changelog,
+            sources,
         })
     }
 }
