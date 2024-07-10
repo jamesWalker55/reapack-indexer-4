@@ -124,7 +124,7 @@ impl Repo {
         ))?;
         let link_pattern = section
             .get("link_pattern")
-            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{latest_commit}/{relpath}"))?;
+            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
