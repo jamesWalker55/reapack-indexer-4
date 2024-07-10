@@ -209,6 +209,7 @@ pub(crate) struct PackageVersion {
     /// The version name, e.g. '0.0.1'
     name: String,
     time: DateTime<chrono::Utc>,
+    changelog: Option<String>,
 }
 
 impl PackageVersion {
@@ -281,10 +282,13 @@ impl PackageVersion {
         };
         let time = time?;
 
+        let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
+
         Ok(Self {
             path: dir.into(),
             name: name.into(),
             time,
+            changelog,
         })
     }
 }
