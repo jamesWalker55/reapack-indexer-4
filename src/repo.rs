@@ -8,12 +8,12 @@ use std::{
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[error("section [{0}] must be defined in the config at: {1}")]
-pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf);
+#[error("section [{0}] must be defined in the config at: {1}\ndetails: {2}")]
+pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf, &'a str);
 
 #[derive(Error, Debug)]
-#[error("`{0}` must be defined in the config at: {1}")]
-pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf);
+#[error("`{0}` must be defined in the config at: {1}\ndetails: {2}")]
+pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf, &'a str);
 
 #[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
@@ -74,9 +74,11 @@ impl Repo {
         let config_path = dir.join("repository.ini");
         let ini = Ini::load_from_file(&config_path)?;
 
-        let section = ini
-            .section(Some("repository"))
-            .ok_or(ConfigSectionMissing("repository", config_path.clone()))?;
+        let section = ini.section(Some("repository")).ok_or(ConfigSectionMissing(
+            "repository",
+            config_path.clone(),
+            "https://github.com/cfillion/reapack/wiki/Index-Format#index-element",
+        ))?;
 
         let identifier = section
             .get("identifier")
@@ -84,13 +86,15 @@ impl Repo {
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone()))?;
-        let author = section
-            .get("author")
-            .ok_or(ConfigKeyMissing("author", config_path.clone()))?;
+            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "The unique identifier for this repository. Should be unique to avoid conflicts with other folders with the same name."))?;
+        let author = section.get("author").ok_or(ConfigKeyMissing(
+            "author",
+            config_path.clone(),
+            "The author of packages within this repository",
+        ))?;
         let link_pattern = section
             .get("link_pattern")
-            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone()))?;
+            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{latest_commit}/{relpath}"))?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -139,27 +143,35 @@ impl Package {
         let config_path = dir.join("package.ini");
         let ini = Ini::load_from_file(&config_path)?;
 
-        let section = ini
-            .section(Some("package"))
-            .ok_or(ConfigSectionMissing("package", config_path.clone()))?;
+        let section = ini.section(Some("package")).ok_or(ConfigSectionMissing(
+            "package",
+            config_path.clone(),
+            "https://github.com/cfillion/reapack/wiki/Index-Format#reapack-element",
+        ))?;
 
-        let r#type = section
-            .get("type")
-            .ok_or(ConfigKeyMissing("type", config_path.clone()))?;
+        let r#type = section.get("type").ok_or(ConfigKeyMissing(
+            "type",
+            config_path.clone(),
+            "Possible values are script, effect, extension, data, theme, langpack, webinterface, projectpl, tracktpl, midinotenames and autoitem",
+        ))?;
         let name = section
             .get("name")
             .map(|x| x.into())
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("name", config_path.clone()))?;
+            .ok_or(ConfigKeyMissing(
+                "name",
+                config_path.clone(),
+                "This is the display name of the package, as seen in Reapack's package list browser",
+            ))?;
         let identifier = section
             .get("identifier")
             .map(|x| x.into())
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone()))?;
+            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "This is the name of the folder where the package will be stored, defaults to the current package's folder name"))?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
@@ -204,20 +216,23 @@ impl PackageVersion {
         let config_path = dir.join("version.ini");
         let ini = Ini::load_from_file(&config_path)?;
 
-        let section = ini
-            .section(Some("version"))
-            .ok_or(ConfigSectionMissing("version", config_path.clone()))?;
+        let section = ini.section(Some("version")).ok_or(ConfigSectionMissing(
+            "version",
+            config_path.clone(),
+            "https://github.com/cfillion/reapack/wiki/Index-Format#version-element",
+        ))?;
 
-        let r#type = section
-            .get("type")
-            .ok_or(ConfigKeyMissing("type", config_path.clone()))?;
         let name = section
             .get("version")
             .map(|x| x.into())
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("version", config_path.clone()))?;
+            .ok_or(ConfigKeyMissing(
+                "version",
+                config_path.clone(),
+                "This should be the version name, e.g. '0.0.1'. Defaults to the current version's folder name",
+            ))?;
 
         let temp = inquire::Confirm::new("Version publication time is not found. Would you like to use the current time as the publication time?")
             .with_default(true)
