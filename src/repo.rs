@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use ini::Ini;
-use relative_path::RelativePathBuf;
+use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
     collections::HashMap,
     fs::{self, read_to_string},
@@ -85,6 +85,32 @@ fn cdata(text: &str) -> String {
     result
 }
 
+#[derive(Error, Debug)]
+#[error("failed to launch git, please ensure it is accessible through the command line")]
+struct FailedToLaunchGit;
+
+#[derive(Error, Debug)]
+#[error("failed to get commit hash in the given path: {0}")]
+struct FailedToGetGitHash(PathBuf);
+
+fn get_git_commit(dir: &Path) -> Result<String> {
+    use std::process::Command;
+    let output = Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|_| FailedToLaunchGit)?;
+
+    if !output.status.success() {
+        return Err(FailedToGetGitHash(dir.into()).into());
+    }
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let hash = stdout.trim().to_string();
+
+    Ok(hash)
+}
+
 #[derive(Debug)]
 pub(crate) struct Repo {
     /// Unique identifier for this repo.
@@ -124,6 +150,7 @@ impl Repo {
         let link_pattern = section
             .get("link_pattern")
             .ok_or(ConfigKeyMissing("link_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
+        let link_pattern = Self::apply_link_pattern(&dir, link_pattern)?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -132,7 +159,9 @@ impl Repo {
                 Package::read(
                     &p,
                     PackageParams {
-                        author: author.to_string(),
+                        repo_path: &dir,
+                        author: &author,
+                        link_pattern: &link_pattern,
                     },
                 )
             })
@@ -145,6 +174,17 @@ impl Repo {
             packages,
             desc,
         })
+    }
+
+    fn apply_link_pattern(dir: &Path, pattern: &str) -> Result<String> {
+        let mut pattern = pattern.to_string();
+
+        if pattern.contains("{git_commit}") {
+            let commit = get_git_commit(dir)?;
+            pattern = pattern.replace("{git_commit}", &commit);
+        }
+
+        Ok(pattern.into())
     }
 
     fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -234,8 +274,10 @@ pub(crate) struct Package {
     versions: Vec<PackageVersion>,
 }
 
-struct PackageParams {
-    author: String,
+struct PackageParams<'a> {
+    repo_path: &'a Path,
+    author: &'a str,
+    link_pattern: &'a str,
 }
 
 impl Package {
@@ -298,7 +340,7 @@ impl Package {
         let author = section
             .get("author")
             // default to params (required)
-            .unwrap_or(params.author.as_str());
+            .unwrap_or(&params.author);
 
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
             .iter()
@@ -306,7 +348,9 @@ impl Package {
                 PackageVersion::read(
                     &p,
                     PackageVersionParams {
-                        author: author.to_string(),
+                        repo_path: &params.repo_path,
+                        author: &author,
+                        link_pattern: &params.link_pattern,
                     },
                 )
             })
@@ -371,8 +415,10 @@ pub(crate) struct PackageVersion {
     sources: Vec<Source>,
 }
 
-struct PackageVersionParams {
-    author: String,
+struct PackageVersionParams<'a> {
+    author: &'a str,
+    repo_path: &'a Path,
+    link_pattern: &'a str,
 }
 
 impl PackageVersion {
@@ -401,7 +447,7 @@ impl PackageVersion {
         let author = section
             .get("author")
             // default to params (required)
-            .unwrap_or(params.author.as_str());
+            .unwrap_or(&params.author);
 
         let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
             match section.get("time") {
@@ -452,16 +498,18 @@ impl PackageVersion {
 
         let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
 
-        let sources: Vec<_> = walkdir::WalkDir::new(dir)
+        let sources: Result<Vec<_>> = walkdir::WalkDir::new(dir)
             .into_iter()
             .filter_map(|entry| match entry {
                 Ok(entry) => {
                     let path = entry.into_path();
-                    // TODO: Determine sections
-                    Some(Source {
-                        path,
-                        sections: vec![],
-                    })
+                    Some(Source::read(
+                        &path,
+                        SourceParams {
+                            repo_path: &params.repo_path,
+                            link_pattern: &params.link_pattern,
+                        },
+                    ))
                 }
                 Err(e) => {
                     println!("Error when scanning sources: {e}");
@@ -469,6 +517,7 @@ impl PackageVersion {
                 }
             })
             .collect();
+        let sources = sources?;
 
         Ok(Self {
             path: dir.into(),
@@ -525,8 +574,40 @@ impl TryFrom<&str> for ActionListSection {
 
 #[derive(Debug)]
 pub(crate) struct Source {
-    path: PathBuf,
+    path: RelativePathBuf,
     sections: Vec<ActionListSection>,
+    url: String,
+}
+
+struct SourceParams<'a> {
+    repo_path: &'a Path,
+    link_pattern: &'a str,
+}
+
+impl Source {
+    fn read(path: &Path, params: SourceParams) -> Result<Self> {
+        let relpath = path.relative_to(&params.repo_path)?;
+        let link_pattern = Self::apply_link_pattern(&relpath, &params.link_pattern)?;
+        // TODO: Check if there are still any remaining variables in the pattern
+        // if link_pattern....
+
+        Ok(Self {
+            path: relpath,
+            // TODO: Determine sections
+            sections: vec![],
+            url: link_pattern.into(),
+        })
+    }
+
+    fn apply_link_pattern(path: &RelativePath, pattern: &str) -> Result<String> {
+        let mut pattern = pattern.to_string();
+
+        if pattern.contains("{relpath}") {
+            pattern = pattern.replace("{relpath}", &path.to_string());
+        }
+
+        Ok(pattern.into())
+    }
 }
 
 #[cfg(test)]
