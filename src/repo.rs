@@ -523,6 +523,16 @@ impl PackageVersion {
             .into_iter()
             .filter_map(|entry| match entry {
                 Ok(entry) => {
+                    // skip directories
+                    match entry.metadata() {
+                        Err(e) => return Some(Err(e.into())),
+                        Ok(metadata) => {
+                            if !metadata.is_file() {
+                                return None;
+                            }
+                        }
+                    }
+
                     let path = entry.into_path();
                     Some(Source::read(
                         &path,
@@ -663,12 +673,14 @@ impl Source {
         // TODO: Implement setting "type" attribute
         // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
 
-        let sections = self
-            .sections
-            .iter()
-            .map(|x| Into::<&str>::into(x))
-            .join(" ");
-        source.add_attribute("main", &sections);
+        if self.sections.len() > 0 {
+            let sections = self
+                .sections
+                .iter()
+                .map(|x| Into::<&str>::into(x))
+                .join(" ");
+            source.add_attribute("main", &sections);
+        }
 
         source
     }
