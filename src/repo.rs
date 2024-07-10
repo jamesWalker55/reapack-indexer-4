@@ -133,6 +133,9 @@ pub(crate) struct Package {
     identifier: String,
     /// Descriptive display name for this package, as shown in Reapack.
     name: String,
+    /// Category for classification, not target folder.
+    /// Must be a Path so I can reverse-engineer how many '../' to add to the source path.
+    category: PathBuf,
     r#type: String,
     desc: Option<String>,
     versions: Vec<PackageVersion>,
@@ -153,6 +156,12 @@ impl Package {
             "type",
             config_path.clone(),
             "Possible values are script, effect, extension, data, theme, langpack, webinterface, projectpl, tracktpl, midinotenames and autoitem",
+        ))?;
+
+        let category = section.get("category").ok_or(ConfigKeyMissing(
+            "category",
+            config_path.clone(),
+            "Used for organization in the package list. (Unlike the official tool, this does not control the target directory)",
         ))?;
         let name = section
             .get("name")
@@ -183,6 +192,7 @@ impl Package {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
+            category: category.into(),
             r#type: r#type.into(),
             name: name.into(),
             desc,
