@@ -125,7 +125,7 @@ pub(crate) struct Repo {
     /// Unique identifier for this repo.
     /// Will be used as the folder name to store the repo.
     identifier: String,
-    link_pattern: String,
+    url_pattern: String,
     packages: Vec<Package>,
     desc: Option<String>,
 }
@@ -160,10 +160,10 @@ impl Repo {
             config_path.clone(),
             "The author of packages within this repository",
         ))?;
-        let link_pattern = section
-            .get("link_pattern")
-            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
-        let link_pattern = Self::apply_link_pattern(&dir, link_pattern)?;
+        let url_pattern = section
+            .get("url_pattern")
+            .ok_or(ConfigKeyMissing("url_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
+        let url_pattern = Self::apply_url_pattern(&dir, url_pattern)?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -174,7 +174,7 @@ impl Repo {
                     PackageParams {
                         repo_path: &dir,
                         author: &author,
-                        link_pattern: &link_pattern,
+                        url_pattern: &url_pattern,
                     },
                 )
             })
@@ -183,13 +183,13 @@ impl Repo {
 
         Ok(Self {
             identifier: identifier.into(),
-            link_pattern: link_pattern.into(),
+            url_pattern: url_pattern.into(),
             packages,
             desc,
         })
     }
 
-    fn apply_link_pattern(dir: &Path, pattern: &str) -> Result<String> {
+    fn apply_url_pattern(dir: &Path, pattern: &str) -> Result<String> {
         let mut pattern = pattern.to_string();
 
         if pattern.contains("{git_commit}") {
@@ -295,7 +295,7 @@ pub(crate) struct Package {
 struct PackageParams<'a> {
     repo_path: &'a Path,
     author: &'a str,
-    link_pattern: &'a str,
+    url_pattern: &'a str,
 }
 
 impl Package {
@@ -368,7 +368,7 @@ impl Package {
                     PackageVersionParams {
                         repo_path: &params.repo_path,
                         author: &author,
-                        link_pattern: &params.link_pattern,
+                        url_pattern: &params.url_pattern,
                         category: &category,
                     },
                 )
@@ -442,7 +442,7 @@ pub(crate) struct PackageVersion {
 struct PackageVersionParams<'a> {
     author: &'a str,
     repo_path: &'a Path,
-    link_pattern: &'a str,
+    url_pattern: &'a str,
     category: &'a RelativePath,
 }
 
@@ -542,7 +542,7 @@ impl PackageVersion {
                         &path,
                         SourceParams {
                             repo_path: &params.repo_path,
-                            link_pattern: &params.link_pattern,
+                            url_pattern: &params.url_pattern,
                             category: &params.category,
                         },
                     ))
@@ -634,7 +634,7 @@ pub(crate) struct Source {
 struct SourceParams<'a> {
     repo_path: &'a Path,
     category: &'a RelativePath,
-    link_pattern: &'a str,
+    url_pattern: &'a str,
 }
 
 impl Source {
@@ -642,9 +642,9 @@ impl Source {
         // path of source file relative to repository root
         let relpath = path.relative_to(&params.repo_path)?;
 
-        let link_pattern = Self::apply_link_pattern(&relpath, &params.link_pattern)?;
+        let url_pattern = Self::apply_url_pattern(&relpath, &params.url_pattern)?;
         let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
-        if let Some(cap) = variable_regex.captures(&link_pattern) {
+        if let Some(cap) = variable_regex.captures(&url_pattern) {
             let mat = cap.get(0).unwrap();
             return Err(UnknownURLPatternVariable(mat.as_str().to_string()).into());
         }
@@ -658,11 +658,11 @@ impl Source {
             output_relpath: output_path,
             // TODO: Determine sections
             sections: vec![],
-            url: link_pattern.into(),
+            url: url_pattern.into(),
         })
     }
 
-    fn apply_link_pattern(path: &RelativePath, pattern: &str) -> Result<String> {
+    fn apply_url_pattern(path: &RelativePath, pattern: &str) -> Result<String> {
         let mut pattern = pattern.to_string();
 
         if pattern.contains("{relpath}") {
