@@ -234,35 +234,57 @@ impl PackageVersion {
                 "This should be the version name, e.g. '0.0.1'. Defaults to the current version's folder name",
             ))?;
 
-        let temp = inquire::Confirm::new("Version publication time is not found. Would you like to use the current time as the publication time?")
-            .with_default(true)
-            .with_help_message("The publication time will be set in version.ini under [version] and key `version`.")
-            .prompt()?;
+        let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
+            match section.get("time") {
+                Some(user_time) => match DateTime::parse_from_rfc3339(user_time) {
+                    Ok(user_time) => Ok(user_time.into()),
+                    Err(e) => {
+                        let prompt_msg = format!("Failed to parse version publication time set in: {}\nError: {:?}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy(), e);
+                        let prompt = inquire::Confirm::new(&prompt_msg)
+                            .with_default(false)
+                            .prompt()?;
+                        if !prompt {
+                            Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
+                        } else {
+                            let time = chrono::Utc::now();
 
-        dbg!(temp);
+                            let mut ini = ini.clone();
 
-        todo!();
+                            ini.with_section(Some("version"))
+                                .set("time", time.to_rfc3339());
+                            ini.write_to_file(&config_path).unwrap();
 
-        // let time: DateTime<chrono::Utc> = {
-        //     let user_time = section
-        //         .get("time")
-        //         .map(|x| x.into())
-        //     // chrono::Utc::now()
-        //     section
-        //         .get("time")
-        //         .map(|x| x.into())
-        //         // default to directory name
-        //         .or(dir.file_name().map(|x| x.to_string_lossy()))
-        //         // if directory name is somehow missing, complain about config
-        //         .ok_or(ConfigKeyMissing("time"))?
-        // };
+                            Ok(time)
+                        }
+                    }
+                },
+                None => {
+                    let prompt_msg = format!("Version publication time is not found in: {}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy());
+                    let prompt = inquire::Confirm::new(&prompt_msg)
+                        .with_default(false)
+                        .prompt()?;
+                    if !prompt {
+                        Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
+                    } else {
+                        let time = chrono::Utc::now();
 
-        // DateTime::parse_from_rfc3339()
+                        let mut ini = ini.clone();
 
-        // Ok(Self {
-        //     path: dir,
-        //     name: name.into(),
-        //     time: todo!(),
-        // })
+                        ini.with_section(Some("version"))
+                            .set("time", time.to_rfc3339());
+                        ini.write_to_file(&config_path).unwrap();
+
+                        Ok(time)
+                    }
+                }
+            }
+        };
+        let time = time?;
+
+        Ok(Self {
+            path: dir.into(),
+            name: name.into(),
+            time,
+        })
     }
 }
