@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use ini::Ini;
+use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
     collections::HashMap,
@@ -364,6 +365,7 @@ impl Package {
                         repo_path: &params.repo_path,
                         author: &author,
                         link_pattern: &params.link_pattern,
+                        category: &category,
                     },
                 )
             })
@@ -437,6 +439,7 @@ struct PackageVersionParams<'a> {
     author: &'a str,
     repo_path: &'a Path,
     link_pattern: &'a str,
+    category: &'a RelativePath,
 }
 
 impl PackageVersion {
@@ -526,6 +529,7 @@ impl PackageVersion {
                         SourceParams {
                             repo_path: &params.repo_path,
                             link_pattern: &params.link_pattern,
+                            category: &params.category,
                         },
                     ))
                 }
@@ -578,7 +582,7 @@ enum ActionListSection {
     MediaExplorer,
 }
 
-impl Into<&str> for ActionListSection {
+impl Into<&str> for &ActionListSection {
     fn into(self) -> &'static str {
         match self {
             ActionListSection::Main => "main",
@@ -607,25 +611,34 @@ impl TryFrom<&str> for ActionListSection {
 
 #[derive(Debug)]
 pub(crate) struct Source {
-    path: RelativePathBuf,
+    /// ReaPack's 'file' path, relative to the generated category folder path
+    output_relpath: RelativePathBuf,
     sections: Vec<ActionListSection>,
     url: String,
 }
 
 struct SourceParams<'a> {
     repo_path: &'a Path,
+    category: &'a RelativePath,
     link_pattern: &'a str,
 }
 
 impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
+        // path of source file relative to repository root
         let relpath = path.relative_to(&params.repo_path)?;
+
         let link_pattern = Self::apply_link_pattern(&relpath, &params.link_pattern)?;
         // TODO: Check if there are still any remaining variables in the pattern
         // if link_pattern....
 
+        let output_path = {
+            let category_path = params.category;
+            category_path.relative(&relpath)
+        };
+
         Ok(Self {
-            path: relpath,
+            output_relpath: output_path,
             // TODO: Determine sections
             sections: vec![],
             url: link_pattern.into(),
@@ -643,7 +656,21 @@ impl Source {
     }
 
     fn element(&self) -> XMLElement {
-        todo!()
+        let mut source = XMLElement::new("source");
+        source.add_text(self.url.clone()).unwrap();
+        source.add_attribute("file", &self.output_relpath.to_string());
+
+        // TODO: Implement setting "type" attribute
+        // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
+
+        let sections = self
+            .sections
+            .iter()
+            .map(|x| Into::<&str>::into(x))
+            .join(" ");
+        source.add_attribute("main", &sections);
+
+        source
     }
 }
 
