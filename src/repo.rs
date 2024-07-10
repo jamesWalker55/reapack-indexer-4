@@ -71,6 +71,10 @@ impl Repo {
 
 #[derive(Debug)]
 pub(crate) struct Package {
+    /// Unique identifier for this package.
+    /// Will be used as the folder name to store the package.
+    identifier: String,
+    /// Descriptive display name for this package, as shown in Reapack.
     name: String,
     r#type: String,
     desc: Option<String>,
@@ -93,9 +97,17 @@ impl Package {
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing("name"))?;
+        let identifier = section
+            .get("identifier")
+            .map(|x| x.into())
+            // default to directory name
+            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            // if directory name is somehow missing, complain about config
+            .ok_or(ConfigKeyMissing("identifier"))?;
         let desc = Self::read_description(dir)?;
 
         Ok(Self {
+            identifier: identifier.into(),
             r#type: r#type.into(),
             name: name.into(),
             desc,
