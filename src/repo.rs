@@ -22,6 +22,38 @@ pub(crate) struct PandocNotInstalled;
 #[error("pandoc returned unexpected output")]
 pub(crate) struct PandocOutputError;
 
+/// Try to read an RTF file at the given path.
+/// If no RTF file is found, read and convert a Markdown file to RTF.
+/// If no Markdown file is found, return None.
+fn read_rtf_or_md_file(path: &Path) -> Result<Option<String>> {
+    let rtf_path = path.with_extension("rtf");
+    if rtf_path.exists() {
+        return Ok(Some(fs::read_to_string(rtf_path)?));
+    }
+
+    let md_path = path.with_extension("md");
+    if md_path.exists() {
+        let mut pandoc = pandoc::new();
+        // TODO: Allow overriding pandoc path
+        // pandoc.add_pandoc_path_hint(custom_path);
+        pandoc.add_input(&md_path);
+        pandoc.add_option(pandoc::PandocOption::Standalone);
+        pandoc.set_output(pandoc::OutputKind::Pipe);
+        pandoc.set_output_format(pandoc::OutputFormat::Rtf, vec![]);
+        // pandoc::PandocError::PandocNotFound
+        let output = pandoc.execute().map_err(|e| match e {
+            pandoc::PandocError::PandocNotFound => anyhow::Error::from(PandocNotInstalled),
+            e => e.into(),
+        })?;
+        let pandoc::PandocOutput::ToBuffer(output) = output else {
+            return Err(PandocOutputError.into());
+        };
+        return Ok(Some(output));
+    }
+
+    Ok(None)
+}
+
 #[derive(Debug)]
 pub(crate) struct Repo {
     /// Unique identifier for this repo.
@@ -30,6 +62,7 @@ pub(crate) struct Repo {
     author: String,
     link_pattern: String,
     packages: Vec<Package>,
+    desc: Option<String>,
 }
 
 impl Repo {
@@ -55,6 +88,7 @@ impl Repo {
         let link_pattern = section
             .get("link_pattern")
             .ok_or(ConfigKeyMissing("link_pattern"))?;
+        let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
             .iter()
@@ -67,6 +101,7 @@ impl Repo {
             author: author.into(),
             link_pattern: link_pattern.into(),
             packages,
+            desc,
         })
     }
 
@@ -118,7 +153,7 @@ impl Package {
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing("identifier"))?;
-        let desc = Self::read_description(dir)?;
+        let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         Ok(Self {
             identifier: identifier.into(),
@@ -126,34 +161,5 @@ impl Package {
             name: name.into(),
             desc,
         })
-    }
-
-    fn read_description(dir: &Path) -> Result<Option<String>> {
-        let rtf_path = dir.join("README.rtf");
-        if rtf_path.exists() {
-            return Ok(Some(fs::read_to_string(rtf_path)?));
-        }
-
-        let md_path = dir.join("README.md");
-        if md_path.exists() {
-            let mut pandoc = pandoc::new();
-            // TODO: Allow overriding pandoc path
-            // pandoc.add_pandoc_path_hint(custom_path);
-            pandoc.add_input(&md_path);
-            pandoc.add_option(pandoc::PandocOption::Standalone);
-            pandoc.set_output(pandoc::OutputKind::Pipe);
-            pandoc.set_output_format(pandoc::OutputFormat::Rtf, vec![]);
-            // pandoc::PandocError::PandocNotFound
-            let output = pandoc.execute().map_err(|e| match e {
-                pandoc::PandocError::PandocNotFound => anyhow::Error::from(PandocNotInstalled),
-                e => e.into(),
-            })?;
-            let pandoc::PandocOutput::ToBuffer(output) = output else {
-                return Err(PandocOutputError.into());
-            };
-            return Ok(Some(output));
-        }
-
-        Ok(None)
     }
 }
