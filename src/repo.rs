@@ -90,7 +90,6 @@ pub(crate) struct Repo {
     /// Unique identifier for this repo.
     /// Will be used as the folder name to store the repo.
     identifier: String,
-    author: String,
     link_pattern: String,
     packages: Vec<Package>,
     desc: Option<String>,
@@ -129,13 +128,19 @@ impl Repo {
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
             .iter()
-            .map(|p| Package::read(&p))
+            .map(|p| {
+                Package::read(
+                    &p,
+                    PackageParams {
+                        author: author.to_string(),
+                    },
+                )
+            })
             .collect();
         let packages = packages?;
 
         Ok(Self {
             identifier: identifier.into(),
-            author: author.into(),
             link_pattern: link_pattern.into(),
             packages,
             desc,
@@ -229,8 +234,12 @@ pub(crate) struct Package {
     versions: Vec<PackageVersion>,
 }
 
+struct PackageParams {
+    author: String,
+}
+
 impl Package {
-    pub(crate) fn read(dir: &Path) -> Result<Self> {
+    pub(crate) fn read(dir: &Path, params: PackageParams) -> Result<Self> {
         let config_path = dir.join("package.ini");
         let ini = Ini::load_from_file(&config_path)?;
 
@@ -286,9 +295,21 @@ impl Package {
         }?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
+        let author = section
+            .get("author")
+            // default to params (required)
+            .unwrap_or(params.author.as_str());
+
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
             .iter()
-            .map(|p| PackageVersion::read(&p))
+            .map(|p| {
+                PackageVersion::read(
+                    &p,
+                    PackageVersionParams {
+                        author: author.to_string(),
+                    },
+                )
+            })
             .collect();
         let versions = versions?;
 
@@ -344,13 +365,18 @@ pub(crate) struct PackageVersion {
     path: PathBuf,
     /// The version name, e.g. '0.0.1'
     name: String,
+    author: String,
     time: DateTime<chrono::Utc>,
     changelog: Option<String>,
     sources: Vec<Source>,
 }
 
+struct PackageVersionParams {
+    author: String,
+}
+
 impl PackageVersion {
-    pub(crate) fn read(dir: &Path) -> Result<Self> {
+    pub(crate) fn read(dir: &Path, params: PackageVersionParams) -> Result<Self> {
         let config_path = dir.join("version.ini");
         let ini = Ini::load_from_file(&config_path)?;
 
@@ -371,6 +397,11 @@ impl PackageVersion {
                 config_path.clone(),
                 "This should be the version name, e.g. '0.0.1'. Defaults to the current version's folder name",
             ))?;
+
+        let author = section
+            .get("author")
+            // default to params (required)
+            .unwrap_or(params.author.as_str());
 
         let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
             match section.get("time") {
@@ -445,10 +476,13 @@ impl PackageVersion {
             time,
             changelog,
             sources,
+            author: author.into(),
         })
     }
 
     fn element(&self) -> XMLElement {
+        let version = XMLElement::new("version");
+
         todo!()
     }
 }
