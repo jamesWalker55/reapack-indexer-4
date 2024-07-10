@@ -32,6 +32,10 @@ pub(crate) struct PackageCategoryCannotBeAbsolutePath(String, PathBuf);
 pub(crate) struct PackageCategoryCannotContainParentDir(String, PathBuf);
 
 #[derive(Error, Debug)]
+#[error("unknown variable in URL pattern: `{0}`")]
+pub(crate) struct UnknownURLPatternVariable(String);
+
+#[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
 pub(crate) struct PandocNotInstalled;
 
@@ -639,8 +643,11 @@ impl Source {
         let relpath = path.relative_to(&params.repo_path)?;
 
         let link_pattern = Self::apply_link_pattern(&relpath, &params.link_pattern)?;
-        // TODO: Check if there are still any remaining variables in the pattern
-        // if link_pattern....
+        let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
+        if let Some(cap) = variable_regex.captures(&link_pattern) {
+            let mat = cap.get(0).unwrap();
+            return Err(UnknownURLPatternVariable(mat.as_str().to_string()).into());
+        }
 
         let output_path = {
             let category_path = params.category;
