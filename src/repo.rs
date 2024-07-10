@@ -11,6 +11,10 @@ use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
 #[derive(Error, Debug)]
+#[error("the given path is not a repository (does not have a repository.ini file): {0}")]
+pub(crate) struct NotARepository(PathBuf);
+
+#[derive(Error, Debug)]
 #[error("section [{0}] must be defined in the config at: {1}\ndetails: {2}")]
 pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf, &'a str);
 
@@ -127,6 +131,10 @@ impl Repo {
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
         let config_path = dir.join("repository.ini");
+        if !config_path.exists() {
+            return Err(NotARepository(dir.into()).into());
+        }
+
         let ini = Ini::load_from_file(&config_path)?;
 
         let section = ini.section(Some("repository")).ok_or(ConfigSectionMissing(
@@ -189,12 +197,17 @@ impl Repo {
 
     fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut paths = vec![];
-        for path in fs::read_dir(dir)? {
-            let path = path?;
-            let is_dir = path.metadata()?.is_dir();
-            if is_dir {
-                paths.push(path.path());
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let is_dir = entry.metadata()?.is_dir();
+            if !is_dir {
+                continue;
             }
+            let path = entry.path();
+            if !path.join("package.ini").exists() {
+                continue;
+            }
+            paths.push(path);
         }
         Ok(paths)
     }
@@ -370,12 +383,17 @@ impl Package {
 
     fn get_version_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut paths = vec![];
-        for path in fs::read_dir(dir)? {
-            let path = path?;
-            let is_dir = path.metadata()?.is_dir();
-            if is_dir {
-                paths.push(path.path());
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let is_dir = entry.metadata()?.is_dir();
+            if !is_dir {
+                continue;
             }
+            let path = entry.path();
+            if !path.join("version.ini").exists() {
+                continue;
+            }
+            paths.push(path);
         }
         Ok(paths)
     }
