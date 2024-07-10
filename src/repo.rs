@@ -220,7 +220,7 @@ pub(crate) struct PackageVersion {
     name: String,
     time: DateTime<chrono::Utc>,
     changelog: Option<String>,
-    sources: Vec<Source>
+    sources: Vec<Source>,
 }
 
 impl PackageVersion {
