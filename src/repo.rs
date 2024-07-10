@@ -292,3 +292,45 @@ impl PackageVersion {
         })
     }
 }
+
+#[derive(Debug)]
+enum ActionListSection {
+    Main,
+    MidiEditor,
+    MidiInlineeditor,
+    MidiEventlisteditor,
+    MediaExplorer,
+}
+
+impl Into<&str> for ActionListSection {
+    fn into(self) -> &'static str {
+        match self {
+            ActionListSection::Main => "main",
+            ActionListSection::MidiEditor => "midi_editor",
+            ActionListSection::MidiInlineeditor => "midi_inlineeditor",
+            ActionListSection::MidiEventlisteditor => "midi_eventlisteditor",
+            ActionListSection::MediaExplorer => "mediaexplorer",
+        }
+    }
+}
+
+impl TryFrom<&str> for ActionListSection {
+    type Error = ();
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value {
+            "main" => Ok(ActionListSection::Main),
+            "midi_editor" => Ok(ActionListSection::MidiEditor),
+            "midi_inlineeditor" => Ok(ActionListSection::MidiInlineeditor),
+            "midi_eventlisteditor" => Ok(ActionListSection::MidiEventlisteditor),
+            "mediaexplorer" => Ok(ActionListSection::MediaExplorer),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Source {
+    path: PathBuf,
+    sections: Vec<ActionListSection>,
+}
