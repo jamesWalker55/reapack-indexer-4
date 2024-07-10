@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use ini::Ini;
+use relative_path::RelativePathBuf;
 use std::{
     fs::{self, read_to_string},
     path::{Path, PathBuf},
@@ -14,6 +15,14 @@ pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf, &'a str);
 #[derive(Error, Debug)]
 #[error("`{0}` must be defined in the config at: {1}\ndetails: {2}")]
 pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf, &'a str);
+
+#[derive(Error, Debug)]
+#[error("category for package `{0}` cannot be an absolute path: {1}")]
+pub(crate) struct PackageCategoryCannotBeAbsolutePath(String, PathBuf);
+
+#[derive(Error, Debug)]
+#[error("category for package `{0}` cannot contain '../': {1}")]
+pub(crate) struct PackageCategoryCannotContainParentDir(String, PathBuf);
 
 #[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
@@ -154,7 +163,7 @@ pub(crate) struct Package {
     name: String,
     /// Category for classification, not target folder.
     /// Must be a Path so I can reverse-engineer how many '../' to add to the source path.
-    category: PathBuf,
+    category: RelativePathBuf,
     r#type: String,
     desc: Option<String>,
     versions: Vec<PackageVersion>,
@@ -177,11 +186,6 @@ impl Package {
             "Possible values are script, effect, extension, data, theme, langpack, webinterface, projectpl, tracktpl, midinotenames and autoitem",
         ))?;
 
-        let category = section.get("category").ok_or(ConfigKeyMissing(
-            "category",
-            config_path.clone(),
-            "Used for organization in the package list. (Unlike the official tool, this does not control the target directory)",
-        ))?;
         let name = section
             .get("name")
             .map(|x| x.into())
@@ -200,6 +204,26 @@ impl Package {
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "This is the name of the folder where the package will be stored, defaults to the current package's folder name"))?;
+        let category = {
+            let text = section.get("category").ok_or(ConfigKeyMissing(
+                "category",
+                config_path.clone(),
+                "Used for organization in the package list. (Unlike the official tool, this does not control the target directory)",
+            ))?;
+            let relpath = RelativePathBuf::from_path(text)
+                .map(|p| p.normalize())
+                .map_err(|_| {
+                    PackageCategoryCannotBeAbsolutePath(name.to_string(), config_path.clone())
+                })?;
+            if relpath.starts_with("..") {
+                Err(PackageCategoryCannotContainParentDir(
+                    name.to_string(),
+                    config_path.clone(),
+                ))
+            } else {
+                Ok(relpath)
+            }
+        }?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
