@@ -3,10 +3,12 @@ use chrono::DateTime;
 use ini::Ini;
 use relative_path::RelativePathBuf;
 use std::{
+    collections::HashMap,
     fs::{self, read_to_string},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
 #[derive(Error, Debug)]
 #[error("section [{0}] must be defined in the config at: {1}\ndetails: {2}")]
@@ -151,6 +153,64 @@ impl Repo {
         }
         Ok(paths)
     }
+
+    pub(crate) fn generate_index<W: std::io::Write>(
+        &self,
+        writer: &mut W,
+    ) -> xml_builder::Result<()> {
+        let mut xml = XMLBuilder::new()
+            .version(XMLVersion::XML1_1)
+            .encoding("UTF-8".into())
+            .build();
+
+        let root_element = self.element();
+        xml.set_root_element(root_element);
+
+        xml.generate(writer)
+    }
+
+    fn element(&self) -> XMLElement {
+        let mut index = XMLElement::new("index");
+        index.add_attribute("version", "1");
+        index.add_attribute("name", &self.identifier);
+
+        // add description
+        if let Some(desc) = &self.desc {
+            let mut metadata = XMLElement::new("metadata");
+            let mut description = XMLElement::new("description");
+            description.add_text(cdata(desc)).unwrap();
+            metadata.add_child(description).unwrap();
+            index.add_child(metadata).unwrap();
+        }
+
+        // group packages into categories
+        let pkg_map = {
+            let mut pkg_map = HashMap::new();
+            for pkg in self.packages.iter() {
+                if !pkg_map.contains_key(&pkg.category) {
+                    pkg_map.insert(&pkg.category, vec![]);
+                }
+                let packages = pkg_map.get_mut(&pkg.category).unwrap();
+                packages.push(pkg)
+            }
+            pkg_map
+        };
+
+        // insert categories into index
+        for (category_name, packages) in pkg_map.iter() {
+            let mut category = XMLElement::new("category");
+            category.add_attribute("name", &category_name.to_string());
+
+            for pkg in packages {
+                let reapack = pkg.element();
+                category.add_child(reapack).unwrap();
+            }
+
+            index.add_child(category).unwrap();
+        }
+
+        index
+    }
 }
 
 #[derive(Debug)]
@@ -253,6 +313,10 @@ impl Package {
             }
         }
         Ok(paths)
+    }
+
+    fn element(&self) -> XMLElement {
+        todo!()
     }
 }
 
