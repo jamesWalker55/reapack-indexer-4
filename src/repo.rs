@@ -55,6 +55,25 @@ fn read_rtf_or_md_file(path: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
+fn cdata(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() + 12);
+    result.push_str("<![CDATA[");
+
+    let mut is_first_part = true;
+    for part in text.split("]]>") {
+        if is_first_part {
+            result.push_str(part);
+            is_first_part = false;
+        } else {
+            result.push_str("]]]]><![CDATA[>");
+            result.push_str(part);
+        }
+    }
+
+    result.push_str("]]>");
+    result
+}
+
 #[derive(Debug)]
 pub(crate) struct Repo {
     /// Unique identifier for this repo.
@@ -363,4 +382,30 @@ impl TryFrom<&str> for ActionListSection {
 pub(crate) struct Source {
     path: PathBuf,
     sections: Vec<ActionListSection>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cdata_01() {
+        let result = cdata("apple");
+        let expected = "<![CDATA[apple]]>";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn cdata_02() {
+        let result = cdata("app]] > < [] &le");
+        let expected = "<![CDATA[app]] > < [] &le]]>";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn cdata_03() {
+        let result = cdata("app]]>le");
+        let expected = "<![CDATA[app]]]]><![CDATA[>le]]>";
+        assert_eq!(result, expected);
+    }
 }
