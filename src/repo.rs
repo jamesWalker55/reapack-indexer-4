@@ -548,9 +548,24 @@ impl PackageVersion {
     }
 
     fn element(&self) -> XMLElement {
-        let version = XMLElement::new("version");
+        let mut version = XMLElement::new("version");
+        version.add_attribute("name", &self.name);
+        version.add_attribute("author", &self.author);
+        version.add_attribute("time", &self.time.to_rfc3339());
 
-        todo!()
+        // add changelog
+        if let Some(text) = &self.changelog {
+            let mut changelog = XMLElement::new("changelog");
+            changelog.add_text(cdata(text)).unwrap();
+            version.add_child(changelog).unwrap();
+        }
+
+        // add sources
+        for source in self.sources.iter() {
+            version.add_child(source.element()).unwrap();
+        }
+
+        version
     }
 }
 
@@ -625,6 +640,10 @@ impl Source {
         }
 
         Ok(pattern.into())
+    }
+
+    fn element(&self) -> XMLElement {
+        todo!()
     }
 }
 
