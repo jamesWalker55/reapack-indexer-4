@@ -316,7 +316,26 @@ impl Package {
     }
 
     fn element(&self) -> XMLElement {
-        todo!()
+        let mut reapack = XMLElement::new("reapack");
+        reapack.add_attribute("desc", &self.name);
+        reapack.add_attribute("type", &self.r#type);
+        reapack.add_attribute("name", &self.identifier);
+
+        // add description
+        if let Some(desc) = &self.desc {
+            let mut metadata = XMLElement::new("metadata");
+            let mut description = XMLElement::new("description");
+            description.add_text(cdata(desc)).unwrap();
+            metadata.add_child(description).unwrap();
+            reapack.add_child(metadata).unwrap();
+        }
+
+        // add versions
+        for version in self.versions.iter() {
+            reapack.add_child(version.element()).unwrap();
+        }
+
+        reapack
     }
 }
 
@@ -427,6 +446,10 @@ impl PackageVersion {
             changelog,
             sources,
         })
+    }
+
+    fn element(&self) -> XMLElement {
+        todo!()
     }
 }
 
