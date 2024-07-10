@@ -484,9 +484,11 @@ dependencies = [
  "clap",
  "inquire",
  "pandoc",
+ "relative-path",
  "rust-ini",
  "thiserror",
  "walkdir",
+ "xml-builder",
 ]
 
 [[package]]
@@ -497,6 +499,12 @@ checksum = "c82cf8cff14456045f55ec4241383baeff27af886adb72ffb2162f99911de0fd"
 dependencies = [
  "bitflags 2.6.0",
 ]
+
+[[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
 name = "rust-ini"
@@ -894,3 +902,9 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "xml-builder"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efc4f1a86af7800dfc4056c7833648ea4515ae21502060b5c98114d828f5333b"
