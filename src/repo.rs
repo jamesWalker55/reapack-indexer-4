@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::DateTime;
 use ini::Ini;
 use std::{
     fs::{self, read_to_string},
@@ -7,12 +8,12 @@ use std::{
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[error("section [{0}] must be defined in the repository config")]
-pub(crate) struct ConfigSectionMissing<'a>(&'a str);
+#[error("section [{0}] must be defined in the config at: {1}")]
+pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf);
 
 #[derive(Error, Debug)]
-#[error("`{0}` must be defined in the repository config")]
-pub(crate) struct ConfigKeyMissing<'a>(&'a str);
+#[error("`{0}` must be defined in the config at: {1}")]
+pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf);
 
 #[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
@@ -71,11 +72,11 @@ impl Repo {
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
         let config_path = dir.join("repository.ini");
-        let ini = Ini::load_from_file(config_path)?;
+        let ini = Ini::load_from_file(&config_path)?;
 
         let section = ini
             .section(Some("repository"))
-            .ok_or(ConfigSectionMissing("repository"))?;
+            .ok_or(ConfigSectionMissing("repository", config_path.clone()))?;
 
         let identifier = section
             .get("identifier")
@@ -83,11 +84,13 @@ impl Repo {
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier"))?;
-        let author = section.get("author").ok_or(ConfigKeyMissing("author"))?;
+            .ok_or(ConfigKeyMissing("identifier", config_path.clone()))?;
+        let author = section
+            .get("author")
+            .ok_or(ConfigKeyMissing("author", config_path.clone()))?;
         let link_pattern = section
             .get("link_pattern")
-            .ok_or(ConfigKeyMissing("link_pattern"))?;
+            .ok_or(ConfigKeyMissing("link_pattern", config_path.clone()))?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -120,6 +123,7 @@ impl Repo {
 
 #[derive(Debug)]
 pub(crate) struct Package {
+    path: PathBuf,
     /// Unique identifier for this package.
     /// Will be used as the folder name to store the package.
     identifier: String,
@@ -127,39 +131,123 @@ pub(crate) struct Package {
     name: String,
     r#type: String,
     desc: Option<String>,
+    versions: Vec<PackageVersion>,
 }
 
 impl Package {
     pub(crate) fn read(dir: &Path) -> Result<Self> {
         let config_path = dir.join("package.ini");
-        let ini = Ini::load_from_file(config_path)?;
+        let ini = Ini::load_from_file(&config_path)?;
 
         let section = ini
             .section(Some("package"))
-            .ok_or(ConfigSectionMissing("package"))?;
+            .ok_or(ConfigSectionMissing("package", config_path.clone()))?;
 
-        let r#type = section.get("type").ok_or(ConfigKeyMissing("type"))?;
+        let r#type = section
+            .get("type")
+            .ok_or(ConfigKeyMissing("type", config_path.clone()))?;
         let name = section
             .get("name")
             .map(|x| x.into())
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("name"))?;
+            .ok_or(ConfigKeyMissing("name", config_path.clone()))?;
         let identifier = section
             .get("identifier")
             .map(|x| x.into())
             // default to directory name
             .or(dir.file_name().map(|x| x.to_string_lossy()))
             // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier"))?;
+            .ok_or(ConfigKeyMissing("identifier", config_path.clone()))?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
+        let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
+            .iter()
+            .map(|p| PackageVersion::read(&p))
+            .collect();
+        let versions = versions?;
+
         Ok(Self {
+            path: dir.into(),
             identifier: identifier.into(),
             r#type: r#type.into(),
             name: name.into(),
             desc,
+            versions,
         })
+    }
+
+    fn get_version_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut paths = vec![];
+        for path in fs::read_dir(dir)? {
+            let path = path?;
+            let is_dir = path.metadata()?.is_dir();
+            if is_dir {
+                paths.push(path.path());
+            }
+        }
+        Ok(paths)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PackageVersion {
+    path: PathBuf,
+    /// The version name, e.g. '0.0.1'
+    name: String,
+    time: DateTime<chrono::Utc>,
+}
+
+impl PackageVersion {
+    pub(crate) fn read(dir: &Path) -> Result<Self> {
+        let config_path = dir.join("version.ini");
+        let ini = Ini::load_from_file(&config_path)?;
+
+        let section = ini
+            .section(Some("version"))
+            .ok_or(ConfigSectionMissing("version", config_path.clone()))?;
+
+        let r#type = section
+            .get("type")
+            .ok_or(ConfigKeyMissing("type", config_path.clone()))?;
+        let name = section
+            .get("version")
+            .map(|x| x.into())
+            // default to directory name
+            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            // if directory name is somehow missing, complain about config
+            .ok_or(ConfigKeyMissing("version", config_path.clone()))?;
+
+        let temp = inquire::Confirm::new("Version publication time is not found. Would you like to use the current time as the publication time?")
+            .with_default(true)
+            .with_help_message("The publication time will be set in version.ini under [version] and key `version`.")
+            .prompt()?;
+
+        dbg!(temp);
+
+        todo!();
+
+        // let time: DateTime<chrono::Utc> = {
+        //     let user_time = section
+        //         .get("time")
+        //         .map(|x| x.into())
+        //     // chrono::Utc::now()
+        //     section
+        //         .get("time")
+        //         .map(|x| x.into())
+        //         // default to directory name
+        //         .or(dir.file_name().map(|x| x.to_string_lossy()))
+        //         // if directory name is somehow missing, complain about config
+        //         .ok_or(ConfigKeyMissing("time"))?
+        // };
+
+        // DateTime::parse_from_rfc3339()
+
+        // Ok(Self {
+        //     path: dir,
+        //     name: name.into(),
+        //     time: todo!(),
+        // })
     }
 }
