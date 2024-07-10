@@ -24,6 +24,9 @@ pub(crate) struct PandocOutputError;
 
 #[derive(Debug)]
 pub(crate) struct Repo {
+    /// Unique identifier for this repo.
+    /// Will be used as the folder name to store the repo.
+    identifier: String,
     author: String,
     link_pattern: String,
     packages: Vec<Package>,
@@ -31,6 +34,9 @@ pub(crate) struct Repo {
 
 impl Repo {
     pub(crate) fn read(dir: &Path) -> Result<Self> {
+        // convert to absolute path to ensure we can get the folder names etc
+        let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
+
         let config_path = dir.join("repository.ini");
         let ini = Ini::load_from_file(config_path)?;
 
@@ -38,18 +44,26 @@ impl Repo {
             .section(Some("repository"))
             .ok_or(ConfigSectionMissing("repository"))?;
 
+        let identifier = section
+            .get("identifier")
+            .map(|x| x.into())
+            // default to directory name
+            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            // if directory name is somehow missing, complain about config
+            .ok_or(ConfigKeyMissing("identifier"))?;
         let author = section.get("author").ok_or(ConfigKeyMissing("author"))?;
         let link_pattern = section
             .get("link_pattern")
             .ok_or(ConfigKeyMissing("link_pattern"))?;
 
-        let packages: Result<Vec<Package>> = Self::get_package_paths(dir)?
+        let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
             .iter()
             .map(|p| Package::read(&p))
             .collect();
         let packages = packages?;
 
         Ok(Self {
+            identifier: identifier.into(),
             author: author.into(),
             link_pattern: link_pattern.into(),
             packages,
