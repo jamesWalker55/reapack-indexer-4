@@ -122,10 +122,10 @@ fn get_git_commit(dir: &Path) -> Result<String> {
 
 #[derive(Debug)]
 pub(crate) struct Repo {
+    path: PathBuf,
     /// Unique identifier for this repo.
     /// Will be used as the folder name to store the repo.
     identifier: String,
-    url_pattern: String,
     packages: Vec<Package>,
     desc: Option<String>,
 }
@@ -152,7 +152,7 @@ impl Repo {
             .get("identifier")
             .map(|x| x.into())
             // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            .or(dir.file_name().map(|x| x.to_string_lossy().to_string()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "The unique identifier for this repository. Should be unique to avoid conflicts with other folders with the same name."))?;
         let author = section.get("author").ok_or(ConfigKeyMissing(
@@ -182,8 +182,8 @@ impl Repo {
         let packages = packages?;
 
         Ok(Self {
+            path: dir.into(),
             identifier: identifier.into(),
-            url_pattern: url_pattern.into(),
             packages,
             desc,
         })
