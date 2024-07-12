@@ -7,7 +7,7 @@ use thiserror::Error;
 
 /// As defined in:
 /// https://github.com/cfillion/reapack/blob/master/src/package.cpp#L36
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PackageType {
     Script,          // script
     Extension,       // extension
@@ -86,7 +86,7 @@ impl<'de> Deserialize<'de> for PackageType {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub(crate) enum ActionListSection {
     MainSection,                // main
     MIDIEditorSection,          // midi_editor
@@ -161,11 +161,11 @@ pub(crate) struct PackageConfig {
     pub(crate) r#type: PackageType,
     pub(crate) identifier: Option<String>,
     pub(crate) author: Option<String>,
-    pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<RelativePathBuf>>>,
+    pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct VersionConfig {
     pub(crate) time: DateTime<Utc>,
-    pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<RelativePathBuf>>>,
+    pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,
 }

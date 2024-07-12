@@ -1,16 +1,21 @@
 use anyhow::Result;
 use chrono::DateTime;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
-use crate::config::{PackageConfig, PackageType, RepositoryConfig, VersionConfig};
+use crate::config::{
+    ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig,
+};
+
+type Entrypoints = HashMap<ActionListSection, GlobSet>;
 
 #[derive(Error, Debug)]
 #[error("the given path is not a repository (does not have a repository.toml file): {0}")]
@@ -19,6 +24,18 @@ pub(crate) struct NotARepository(PathBuf);
 #[derive(Error, Debug)]
 #[error("unknown variable in URL pattern: `{0}`")]
 pub(crate) struct UnknownURLPatternVariable(String);
+
+#[derive(Error, Debug)]
+#[error("entrypoints can only be defined in packages with type = \"script\": `{0}`")]
+pub(crate) struct EntrypointsOnlyAllowedInScriptPackages(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("script packages must have entrypoints defined: `{0}`")]
+pub(crate) struct NoEntrypointsDefinedForScriptPackage(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("entrypoints is defined in config, but no files were matched: `{0}`")]
+pub(crate) struct NoEntrypointsFoundForScriptPackage(PathBuf);
 
 #[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
@@ -294,6 +311,28 @@ impl Package {
             // default to params (required)
             .unwrap_or(params.author.into());
 
+        if config.entrypoints.is_some() && config.r#type != PackageType::Script {
+            return Err(EntrypointsOnlyAllowedInScriptPackages(config_path).into());
+        }
+        if config.entrypoints.is_none() && config.r#type == PackageType::Script {
+            return Err(NoEntrypointsDefinedForScriptPackage(config_path).into());
+        }
+        let entrypoints: Option<Entrypoints> = config
+            .entrypoints
+            .map(|entrypoints| {
+                let mut result: Entrypoints = HashMap::new();
+                for (section, patterns) in entrypoints.into_iter() {
+                    let mut builder = GlobSetBuilder::new();
+                    for pattern in patterns {
+                        builder.add(Glob::new(&pattern)?);
+                    }
+                    let set = builder.build()?;
+                    result.insert(section, set);
+                }
+                Ok::<_, globset::Error>(result)
+            })
+            .transpose()?;
+
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(dir)?
             .iter()
             .map(|p| {
@@ -304,6 +343,7 @@ impl Package {
                         author: &author,
                         url_pattern: params.url_pattern,
                         category: &config.category,
+                        entrypoints: &entrypoints.as_ref(),
                     },
                 )
             })
@@ -378,6 +418,7 @@ pub(crate) struct PackageVersionParams<'a> {
     repo_path: &'a Path,
     url_pattern: &'a str,
     category: &'a RelativePath,
+    entrypoints: &'a Option<&'a Entrypoints>,
 }
 
 impl PackageVersion {
@@ -388,6 +429,23 @@ impl PackageVersion {
         let name = dir.file_name().unwrap().to_string_lossy();
 
         let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
+
+        let entrypoints: Option<Entrypoints> = config
+            .entrypoints
+            .map(|entrypoints| {
+                let mut result: Entrypoints = HashMap::new();
+                for (section, patterns) in entrypoints.into_iter() {
+                    let mut builder = GlobSetBuilder::new();
+                    for pattern in patterns {
+                        builder.add(Glob::new(&pattern)?);
+                    }
+                    let set = builder.build()?;
+                    result.insert(section, set);
+                }
+                Ok::<_, globset::Error>(result)
+            })
+            .transpose()?;
+        let entrypoints = &entrypoints.as_ref().or(*params.entrypoints);
 
         let sources: Result<Vec<_>> = walkdir::WalkDir::new(dir)
             .into_iter()
@@ -410,6 +468,7 @@ impl PackageVersion {
                             repo_path: params.repo_path,
                             url_pattern: params.url_pattern,
                             category: params.category,
+                            entrypoints: entrypoints,
                         },
                     ))
                 }
@@ -420,6 +479,13 @@ impl PackageVersion {
             })
             .collect();
         let sources = sources?;
+
+        if entrypoints.is_some() {
+            let has_entrypoint_files = sources.iter().any(|x| x.sections.len() > 0);
+            if !has_entrypoint_files {
+                return Err(NoEntrypointsFoundForScriptPackage(config_path).into());
+            }
+        }
 
         Ok(Self {
             path: dir.into(),
@@ -454,46 +520,10 @@ impl PackageVersion {
 }
 
 #[derive(Debug)]
-enum ActionListSection {
-    Main,
-    MidiEditor,
-    MidiInlineeditor,
-    MidiEventlisteditor,
-    MediaExplorer,
-}
-
-impl From<&ActionListSection> for &str {
-    fn from(val: &ActionListSection) -> Self {
-        match val {
-            ActionListSection::Main => "main",
-            ActionListSection::MidiEditor => "midi_editor",
-            ActionListSection::MidiInlineeditor => "midi_inlineeditor",
-            ActionListSection::MidiEventlisteditor => "midi_eventlisteditor",
-            ActionListSection::MediaExplorer => "mediaexplorer",
-        }
-    }
-}
-
-impl TryFrom<&str> for ActionListSection {
-    type Error = ();
-
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
-        match value {
-            "main" => Ok(ActionListSection::Main),
-            "midi_editor" => Ok(ActionListSection::MidiEditor),
-            "midi_inlineeditor" => Ok(ActionListSection::MidiInlineeditor),
-            "midi_eventlisteditor" => Ok(ActionListSection::MidiEventlisteditor),
-            "mediaexplorer" => Ok(ActionListSection::MediaExplorer),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Source {
     /// ReaPack's 'file' path, relative to the generated category folder path
     output_relpath: RelativePathBuf,
-    sections: Vec<ActionListSection>,
+    sections: HashSet<ActionListSection>,
     url: String,
 }
 
@@ -501,12 +531,28 @@ struct SourceParams<'a> {
     repo_path: &'a Path,
     category: &'a RelativePath,
     url_pattern: &'a str,
+    entrypoints: &'a Option<&'a Entrypoints>,
 }
 
 impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
         // path of source file relative to repository root
         let relpath = path.relative_to(params.repo_path)?;
+
+        let sections = match params.entrypoints {
+            Some(entrypoints) => entrypoints
+                .iter()
+                .filter_map(|(section, globset)| {
+                    let matches = globset.matches(relpath.to_path("."));
+                    if matches.is_empty() {
+                        None
+                    } else {
+                        Some(*section)
+                    }
+                })
+                .collect(),
+            None => HashSet::new(),
+        };
 
         let url_pattern = Self::apply_url_pattern(&relpath, params.url_pattern)?;
         let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
@@ -523,7 +569,7 @@ impl Source {
         Ok(Self {
             output_relpath: output_path,
             // TODO: Determine sections
-            sections: vec![],
+            sections,
             url: url_pattern,
         })
     }
