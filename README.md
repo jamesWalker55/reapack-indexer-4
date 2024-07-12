@@ -62,19 +62,19 @@ The basic flow for using this tool is like this:
 mkdir my-repository
 cd my-repository
 
-.$ri4 init .
+reapack-indexer-4 init .
 # Created repository at D:/my-repository
 # Please edit the repository configuration: D:/my-repository/repository.toml
 
 # (edit the config file)
 nano repository.toml
 
-.$ri4 publish --repo . --identifier my-first-package "D:/Programming/Files to distribute" --new
+reapack-indexer-4 publish --repo . --identifier my-first-package "D:/Programming/Files to distribute" --new
 # Created package my-first-package
 # Please edit the package configuration: D:/my-repository/my-first-package/package.toml
 # Created version 0.0.1
 
-.$ri4 export index.xml
+reapack-indexer-4 export index.xml
 
 cat index.xml
 ```
