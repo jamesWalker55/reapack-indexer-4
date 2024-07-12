@@ -1,3 +1,4 @@
+mod config;
 mod repo;
 mod templates;
 mod version;
