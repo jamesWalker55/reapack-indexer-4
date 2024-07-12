@@ -10,9 +10,10 @@ use std::{
 };
 
 use anyhow::Result;
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 use repo::Package;
-use templates::PackageTemplateParams;
+use templates::{PackageTemplateParams, VersionTemplateParams};
 use thiserror::Error;
 use version::{find_latest_version, increment_version};
 
@@ -168,7 +169,22 @@ fn main() -> Result<()> {
                     None => "0.0.1".into(),
                 },
             };
-            // let ver_path = pkg_path.join(version)
+            let ver_path = pkg_path.join(&new_version);
+            let ver_config_path = ver_path.join("version.ini");
+
+            // create package dir
+            if !ver_path.exists() {
+                fs::create_dir(&pkg_path)?;
+            }
+
+            // create package config
+            let current_time = Utc::now().to_rfc3339();
+            let config_text = templates::generate_version_config(
+                &&VersionTemplateParams::default().time(&current_time),
+            );
+            fs::write(&ver_config_path, config_text)?;
+
+            println!("Created version {}", &new_version);
 
             // if !pkg_path.exists() {
             //     fs::create_dir(&pkg_path)?;
