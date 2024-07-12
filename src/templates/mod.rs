@@ -79,6 +79,8 @@ pub(crate) fn generate_version_config(params: &VersionTemplateParams) -> String 
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{PackageConfig, RepositoryConfig, VersionConfig};
+
     use super::*;
 
     #[test]
@@ -92,5 +94,21 @@ mod tests {
     #[test]
     fn can_generate_version_config() {
         generate_version_config(&VersionTemplateParams::default());
+    }
+
+    #[test]
+    fn generated_repository_config_is_valid() {
+        let text = generate_repository_config(&RepositoryTemplateParams::default());
+        let _: RepositoryConfig = toml::from_str(&text).unwrap();
+    }
+    #[test]
+    fn generated_package_config_is_valid() {
+        let text = generate_package_config(&PackageTemplateParams::default());
+        let _: PackageConfig = toml::from_str(&text).unwrap();
+    }
+    #[test]
+    fn generated_version_config_is_valid() {
+        let text = generate_version_config(&VersionTemplateParams::default());
+        let _: VersionConfig = toml::from_str(&text).unwrap();
     }
 }
