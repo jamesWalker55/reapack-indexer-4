@@ -466,6 +466,7 @@ impl PackageVersion {
                         &path,
                         SourceParams {
                             repo_path: params.repo_path,
+                            version_path: dir,
                             url_pattern: params.url_pattern,
                             category: params.category,
                             entrypoints: entrypoints,
@@ -529,6 +530,7 @@ pub(crate) struct Source {
 
 struct SourceParams<'a> {
     repo_path: &'a Path,
+    version_path: &'a Path,
     category: &'a RelativePath,
     url_pattern: &'a str,
     entrypoints: &'a Option<&'a Entrypoints>,
@@ -538,12 +540,17 @@ impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
         // path of source file relative to repository root
         let relpath = path.relative_to(params.repo_path)?;
+        // path of source file relative to version root
+        let relpath_to_version = path.relative_to(params.version_path)?;
 
         let sections = match params.entrypoints {
             Some(entrypoints) => entrypoints
                 .iter()
                 .filter_map(|(section, globset)| {
-                    let matches = globset.matches(relpath.to_path("."));
+                    // Use '.to_string()' instead of '.to_path(".")'!!
+                    // Because '.to_path(".")' adds a './' to the beginning of the path, messing up the glob matcher,
+                    // while '.to_string()' does not add a './' and keeps the path as-is.
+                    let matches = globset.matches(relpath_to_version.to_string());
                     if matches.is_empty() {
                         None
                     } else {
