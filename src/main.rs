@@ -219,7 +219,7 @@ fn main() -> Result<()> {
 
             // create package dir
             if !ver_path.exists() {
-                fs::create_dir(&pkg_path)?;
+                fs::create_dir(&ver_path)?;
             }
 
             // don't create package config yet, do it after source files have been copied
