@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::DateTime;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
@@ -324,7 +324,7 @@ impl Package {
                 for (section, patterns) in entrypoints.into_iter() {
                     let mut builder = GlobSetBuilder::new();
                     for pattern in patterns {
-                        builder.add(Glob::new(&pattern)?);
+                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
                     }
                     let set = builder.build()?;
                     result.insert(section, set);
@@ -437,7 +437,7 @@ impl PackageVersion {
                 for (section, patterns) in entrypoints.into_iter() {
                     let mut builder = GlobSetBuilder::new();
                     for pattern in patterns {
-                        builder.add(Glob::new(&pattern)?);
+                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
                     }
                     let set = builder.build()?;
                     result.insert(section, set);
