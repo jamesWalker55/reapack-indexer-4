@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::DateTime;
-use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
@@ -365,7 +365,7 @@ impl Package {
 
         Ok(Self {
             path: dir.into(),
-            identifier: identifier.into(),
+            identifier: identifier,
             category: config.category.clone(),
             r#type: config.r#type.clone(),
             name,
@@ -482,7 +482,7 @@ impl PackageVersion {
                             version_path: dir,
                             url_pattern: params.url_pattern,
                             category: params.category,
-                            entrypoints: entrypoints,
+                            entrypoints,
                         },
                     ))
                 }
@@ -495,7 +495,7 @@ impl PackageVersion {
         let sources = sources?;
 
         if entrypoints.is_some() {
-            let has_entrypoint_files = sources.iter().any(|x| x.sections.len() > 0);
+            let has_entrypoint_files = sources.iter().any(|x| !x.sections.is_empty());
             if !has_entrypoint_files {
                 return Err(NoEntrypointsFoundForScriptPackage(config_path).into());
             }
@@ -598,7 +598,7 @@ impl Source {
         let mut pattern = pattern.to_string();
 
         if pattern.contains("{relpath}") {
-            let path = url_encode_path(&path);
+            let path = url_encode_path(path);
             pattern = pattern.replace("{relpath}", &path);
         }
 

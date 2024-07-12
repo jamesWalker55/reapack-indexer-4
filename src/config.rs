@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use relative_path::RelativePathBuf;
@@ -82,7 +82,7 @@ impl<'de> Deserialize<'de> for PackageType {
         // let x = String::deserialize(deserializer)?;
         let text = String::deserialize(deserializer)?;
         text.parse::<PackageType>()
-            .map_err(|e| serde::de::Error::custom(e))
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -143,7 +143,7 @@ impl<'de> Deserialize<'de> for ActionListSection {
         // let x = String::deserialize(deserializer)?;
         let text = String::deserialize(deserializer)?;
         text.parse::<ActionListSection>()
-            .map_err(|e| serde::de::Error::custom(e))
+            .map_err(serde::de::Error::custom)
     }
 }
 
