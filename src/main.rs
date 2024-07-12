@@ -190,7 +190,7 @@ fn main() -> Result<()> {
                 println!("Created package {}", &identifier);
                 println!(
                     "Please edit the package configuration: {}",
-                    &pkg_config_path.to_string_lossy()
+                    &path::absolute(pkg_config_path)?.to_string_lossy()
                 );
             } else {
                 // use existing repo
@@ -263,10 +263,10 @@ fn main() -> Result<()> {
             let config_text = templates::generate_repository_config(&params);
             fs::write(&repo_config_path, config_text)?;
 
-            println!("Created repository at {}", &repo.display());
+            println!("Created repository at {}", &path::absolute(repo)?.display());
             println!(
                 "Please edit the repository configuration: {}",
-                &repo_config_path.to_string_lossy()
+                &path::absolute(repo_config_path)?.to_string_lossy()
             );
         }
         Commands::Template { template } => {
