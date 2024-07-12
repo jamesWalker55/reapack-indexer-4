@@ -174,7 +174,7 @@ impl Repo {
                     p,
                     PackageParams {
                         repo_path: &dir,
-                        author: author,
+                        author,
                         url_pattern: &url_pattern,
                     },
                 )
@@ -184,7 +184,7 @@ impl Repo {
 
         Ok(Self {
             path: dir,
-            identifier: identifier,
+            identifier,
             author: author.into(),
             packages,
             desc,
@@ -302,7 +302,7 @@ pub(crate) struct Package {
     versions: Vec<PackageVersion>,
 }
 
-struct PackageParams<'a> {
+pub(crate) struct PackageParams<'a> {
     repo_path: &'a Path,
     author: &'a str,
     url_pattern: &'a str,
@@ -377,7 +377,7 @@ impl Package {
                     p,
                     PackageVersionParams {
                         repo_path: params.repo_path,
-                        author: author,
+                        author,
                         url_pattern: params.url_pattern,
                         category: &category,
                     },
@@ -389,7 +389,7 @@ impl Package {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
-            category: category,
+            category,
             r#type: r#type.into(),
             name: name.into(),
             desc,
@@ -449,7 +449,7 @@ pub(crate) struct PackageVersion {
     sources: Vec<Source>,
 }
 
-struct PackageVersionParams<'a> {
+pub(crate) struct PackageVersionParams<'a> {
     author: &'a str,
     repo_path: &'a Path,
     url_pattern: &'a str,
