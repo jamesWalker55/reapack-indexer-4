@@ -287,3 +287,23 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS, NON_ALPHANUMERIC};
+
+    use super::*;
+
+    #[test]
+    fn test_01() {
+        let input = "fx-chunk-data/0.0.1/Copy chunk data from last-focused FX.lua";
+        let expected = "fx-chunk-data/0.0.1/Copy%20chunk%20data%20from%20last-focused%20FX.lua";
+        const FRAGMENT: &AsciiSet = &NON_ALPHANUMERIC
+            .remove(b'/')
+            .remove(b'.')
+            .remove(b'-')
+            .remove(b'_');
+        let result = utf8_percent_encode(input, FRAGMENT).to_string();
+        assert_eq!(result, expected);
+    }
+}

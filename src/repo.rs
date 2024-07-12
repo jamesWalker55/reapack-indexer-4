@@ -96,6 +96,19 @@ fn cdata(text: &str) -> String {
     result
 }
 
+fn url_encode_path(path: &RelativePath) -> String {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+
+    let input = path.normalize().to_string();
+
+    const FRAGMENT: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'/')
+        .remove(b'.')
+        .remove(b'-')
+        .remove(b'_');
+    utf8_percent_encode(&input, FRAGMENT).to_string()
+}
+
 #[derive(Error, Debug)]
 #[error("failed to launch git, please ensure it is accessible through the command line")]
 struct FailedToLaunchGit;
@@ -585,7 +598,8 @@ impl Source {
         let mut pattern = pattern.to_string();
 
         if pattern.contains("{relpath}") {
-            pattern = pattern.replace("{relpath}", path.as_ref());
+            let path = url_encode_path(&path);
+            pattern = pattern.replace("{relpath}", &path);
         }
 
         Ok(pattern)
