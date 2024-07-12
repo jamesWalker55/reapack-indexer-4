@@ -59,7 +59,7 @@ template_params!(
     PackageTemplateParams,
     name: &'a str = "My cool package",
     category: &'a str = "Category",
-    r#type: &'a str = "script",
+    typ: &'a str = "script", // not 'type' because it is a reserved word
     identifier: &'a str = "my-cool-package",
     author: &'a str = "Your Name"
 );
