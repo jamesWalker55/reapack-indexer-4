@@ -123,7 +123,7 @@ fn main() -> Result<()> {
 
     match &args.command {
         Commands::Export { output_path, repo } => {
-            let repo = repo::Repo::read(&repo)?;
+            let repo = repo::Repo::read(repo)?;
             let f = File::create(output_path)?;
             let mut f = BufWriter::new(f);
             repo.generate_index(&mut f).unwrap();
@@ -170,7 +170,7 @@ fn main() -> Result<()> {
             let pkg_config_path = pkg_path.join("package.ini");
             if *new {
                 if pkg_config_path.exists() {
-                    return Err(PackageAlreadyExists(pkg_path.into()).into());
+                    return Err(PackageAlreadyExists(pkg_path).into());
                 }
 
                 // create package dir
@@ -181,8 +181,8 @@ fn main() -> Result<()> {
                 // create package config
                 let config_text = templates::generate_package_config(
                     &PackageTemplateParams::default()
-                        .name(&identifier)
-                        .identifier(&identifier),
+                        .name(identifier)
+                        .identifier(identifier),
                 );
                 fs::write(&pkg_config_path, config_text)?;
 
@@ -194,7 +194,7 @@ fn main() -> Result<()> {
             } else {
                 // use existing repo
                 if !pkg_config_path.exists() {
-                    return Err(PackageDoesNotExist(pkg_path.into()).into());
+                    return Err(PackageDoesNotExist(pkg_path).into());
                 }
             }
 
@@ -204,13 +204,13 @@ fn main() -> Result<()> {
                 .collect();
             let new_version: String = match version {
                 Some(version) => {
-                    if versions.contains(version.into()) {
+                    if versions.contains(version) {
                         return Err(VersionAlreadyExists(version.into()).into());
                     }
                     version.into()
                 }
                 None => match find_latest_version(versions.iter().map(|x| x.as_ref())) {
-                    Some(latest_version) => increment_version(&latest_version)?,
+                    Some(latest_version) => increment_version(latest_version)?,
                     None => "0.0.1".into(),
                 },
             };
@@ -239,9 +239,9 @@ fn main() -> Result<()> {
             {
                 let current_time = Utc::now().to_rfc3339();
                 let config_text = templates::generate_version_config(
-                    &&VersionTemplateParams::default().time(&current_time),
+                    &VersionTemplateParams::default().time(&current_time),
                 );
-                fs::write(&ver_config_path, config_text)?;
+                fs::write(ver_config_path, config_text)?;
             }
 
             println!("Created version {}", &new_version);
@@ -250,14 +250,14 @@ fn main() -> Result<()> {
             let repo = path::absolute(repo)?;
             let repo_config_path = repo.join("repository.ini");
             if repo_config_path.exists() {
-                return Err(RepositoryAlreadyExists(repo.into()).into());
+                return Err(RepositoryAlreadyExists(repo).into());
             }
 
             let identifier = repo.file_name().map(|x| x.to_string_lossy());
 
             let mut params = RepositoryTemplateParams::default();
             if let Some(identifier) = &identifier {
-                params = params.identifier(&identifier);
+                params = params.identifier(identifier);
             }
             let config_text = templates::generate_repository_config(&params);
             fs::write(&repo_config_path, config_text)?;

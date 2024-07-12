@@ -5,7 +5,7 @@ use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
     collections::HashMap,
-    fs::{self, read_to_string},
+    fs::{self},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -138,7 +138,7 @@ impl Repo {
 
         let config_path = dir.join("repository.ini");
         if !config_path.exists() {
-            return Err(NotARepository(dir.into()).into());
+            return Err(NotARepository(dir).into());
         }
 
         let ini = Ini::load_from_file(&config_path)?;
@@ -171,10 +171,10 @@ impl Repo {
             .iter()
             .map(|p| {
                 Package::read(
-                    &p,
+                    p,
                     PackageParams {
                         repo_path: &dir,
-                        author: &author,
+                        author: author,
                         url_pattern: &url_pattern,
                     },
                 )
@@ -183,8 +183,8 @@ impl Repo {
         let packages = packages?;
 
         Ok(Self {
-            path: dir.into(),
-            identifier: identifier.into(),
+            path: dir,
+            identifier: identifier,
             author: author.into(),
             packages,
             desc,
@@ -199,7 +199,7 @@ impl Repo {
             pattern = pattern.replace("{git_commit}", &commit);
         }
 
-        Ok(pattern.into())
+        Ok(pattern)
     }
 
     pub(crate) fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -264,7 +264,7 @@ impl Repo {
         // insert categories into index
         for (category_name, packages) in pkg_map.iter() {
             let mut category = XMLElement::new("category");
-            category.add_attribute("name", &category_name.to_string());
+            category.add_attribute("name", category_name.as_ref());
 
             for pkg in packages {
                 let reapack = pkg.element();
@@ -368,17 +368,17 @@ impl Package {
         let author = section
             .get("author")
             // default to params (required)
-            .unwrap_or(&params.author);
+            .unwrap_or(params.author);
 
-        let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(&dir)?
+        let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(dir)?
             .iter()
             .map(|p| {
                 PackageVersion::read(
-                    &p,
+                    p,
                     PackageVersionParams {
-                        repo_path: &params.repo_path,
-                        author: &author,
-                        url_pattern: &params.url_pattern,
+                        repo_path: params.repo_path,
+                        author: author,
+                        url_pattern: params.url_pattern,
                         category: &category,
                     },
                 )
@@ -389,7 +389,7 @@ impl Package {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
-            category: category.into(),
+            category: category,
             r#type: r#type.into(),
             name: name.into(),
             desc,
@@ -482,7 +482,7 @@ impl PackageVersion {
         let author = section
             .get("author")
             // default to params (required)
-            .unwrap_or(&params.author);
+            .unwrap_or(params.author);
 
         let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
             match section.get("time") {
@@ -551,9 +551,9 @@ impl PackageVersion {
                     Some(Source::read(
                         &path,
                         SourceParams {
-                            repo_path: &params.repo_path,
-                            url_pattern: &params.url_pattern,
-                            category: &params.category,
+                            repo_path: params.repo_path,
+                            url_pattern: params.url_pattern,
+                            category: params.category,
                         },
                     ))
                 }
@@ -606,9 +606,9 @@ enum ActionListSection {
     MediaExplorer,
 }
 
-impl Into<&str> for &ActionListSection {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&ActionListSection> for &str {
+    fn from(val: &ActionListSection) -> Self {
+        match val {
             ActionListSection::Main => "main",
             ActionListSection::MidiEditor => "midi_editor",
             ActionListSection::MidiInlineeditor => "midi_inlineeditor",
@@ -650,9 +650,9 @@ struct SourceParams<'a> {
 impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
         // path of source file relative to repository root
-        let relpath = path.relative_to(&params.repo_path)?;
+        let relpath = path.relative_to(params.repo_path)?;
 
-        let url_pattern = Self::apply_url_pattern(&relpath, &params.url_pattern)?;
+        let url_pattern = Self::apply_url_pattern(&relpath, params.url_pattern)?;
         let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
         if let Some(cap) = variable_regex.captures(&url_pattern) {
             let mat = cap.get(0).unwrap();
@@ -668,7 +668,7 @@ impl Source {
             output_relpath: output_path,
             // TODO: Determine sections
             sections: vec![],
-            url: url_pattern.into(),
+            url: url_pattern,
         })
     }
 
@@ -676,26 +676,22 @@ impl Source {
         let mut pattern = pattern.to_string();
 
         if pattern.contains("{relpath}") {
-            pattern = pattern.replace("{relpath}", &path.to_string());
+            pattern = pattern.replace("{relpath}", path.as_ref());
         }
 
-        Ok(pattern.into())
+        Ok(pattern)
     }
 
     fn element(&self) -> XMLElement {
         let mut source = XMLElement::new("source");
         source.add_text(self.url.clone()).unwrap();
-        source.add_attribute("file", &self.output_relpath.to_string());
+        source.add_attribute("file", self.output_relpath.as_ref());
 
         // TODO: Implement setting "type" attribute
         // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
 
-        if self.sections.len() > 0 {
-            let sections = self
-                .sections
-                .iter()
-                .map(|x| Into::<&str>::into(x))
-                .join(" ");
+        if !self.sections.is_empty() {
+            let sections = self.sections.iter().map(Into::<&str>::into).join(" ");
             source.add_attribute("main", &sections);
         }
 

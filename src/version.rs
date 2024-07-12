@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use itertools::Itertools;
 use thiserror::Error;
 
@@ -14,14 +12,14 @@ pub(crate) fn increment_version(text: &str) -> Result<String, UnknownVersionForm
         let mut suffix = String::new();
         for c in text.chars().rev() {
             // if found non-digit char, stop the loop
-            if c.is_digit(10) {
+            if c.is_ascii_digit() {
                 suffix.push(c);
             } else {
                 break;
             }
         }
         if suffix.is_empty() {
-            return Err(UnknownVersionFormat(text.into()));
+            return Err(UnknownVersionFormat(text));
         }
         suffix = suffix.chars().rev().collect();
         Ok(suffix)
@@ -41,7 +39,7 @@ where
     I: Iterator<Item = &'a str>,
 {
     versions.max_by(|version_a, version_b| {
-        for entry in version_a.split(".").zip_longest(version_b.split(".")) {
+        for entry in version_a.split('.').zip_longest(version_b.split('.')) {
             match entry {
                 itertools::EitherOrBoth::Both(part_a, part_b) => match part_a
                     .partial_cmp(part_b)
