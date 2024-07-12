@@ -6,7 +6,7 @@ use std::{
     collections::HashSet,
     fs::{self, File},
     io::BufWriter,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Result;
@@ -32,6 +32,10 @@ pub(crate) struct PackageAlreadyExists(PathBuf);
 #[derive(Error, Debug)]
 #[error("version already exists: `{0}`")]
 pub(crate) struct VersionAlreadyExists(String);
+
+#[derive(Error, Debug)]
+#[error("the source folder to publish does not exist: `{0}`")]
+pub(crate) struct SourceDoesNotExist(PathBuf);
 
 #[derive(Error, Debug)]
 #[error("the package name is not filename-safe, please choose a different package name: `{0}`")]
@@ -78,6 +82,20 @@ enum Commands {
     },
 }
 
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -98,6 +116,11 @@ fn main() -> Result<()> {
             // check that repository exists
             if !repo.join("repository.ini").exists() {
                 return Err(RepositoryDoesNotExist(repo.into()).into());
+            }
+
+            // check that the source path exists
+            if !path.exists() {
+                return Err(SourceDoesNotExist(path.into()).into());
             }
 
             // check that the identifier and version are sane
@@ -177,34 +200,29 @@ fn main() -> Result<()> {
                 fs::create_dir(&pkg_path)?;
             }
 
+            // don't create package config yet, do it after source files have been copied
+
+            // copy the source to the version folder
+            {
+                let metadata = path.metadata()?;
+                if metadata.is_dir() {
+                    copy_dir_all(path, ver_path)?;
+                } else if metadata.is_file() {
+                    let dst_path = ver_path.join(path.file_name().unwrap());
+                    fs::copy(path, dst_path)?;
+                }
+            }
+
             // create package config
-            let current_time = Utc::now().to_rfc3339();
-            let config_text = templates::generate_version_config(
-                &&VersionTemplateParams::default().time(&current_time),
-            );
-            fs::write(&ver_config_path, config_text)?;
+            {
+                let current_time = Utc::now().to_rfc3339();
+                let config_text = templates::generate_version_config(
+                    &&VersionTemplateParams::default().time(&current_time),
+                );
+                fs::write(&ver_config_path, config_text)?;
+            }
 
             println!("Created version {}", &new_version);
-
-            // if !pkg_path.exists() {
-            //     fs::create_dir(&pkg_path)?;
-            //     println!("Created package {}", &identifier);
-            // }
-
-            // if !pkg_config_path.exists() {
-            //     let config_text = templates::generate_package_config(
-            //         &PackageTemplateParams::default()
-            //             .name(&identifier)
-            //             .identifier(&identifier),
-            //     );
-            //     fs::write(&pkg_config_path, config_text)?;
-            //     println!(
-            //         "Created initial package configuration: {}",
-            //         &pkg_config_path.to_string_lossy()
-            //     );
-            // }
-
-            todo!()
         }
     }
 
