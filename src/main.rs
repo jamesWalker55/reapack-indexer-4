@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use repo::Package;
 use templates::PackageTemplateParams;
 use thiserror::Error;
-use version::increment_version;
+use version::{find_latest_version, increment_version};
 
 #[derive(Error, Debug)]
 #[error("repository does not exist: `{0}`")]
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
                     }
                     version.into()
                 }
-                None => match versions.iter().max() {
+                None => match find_latest_version(versions.iter().map(|x| x.as_ref())) {
                     Some(latest_version) => increment_version(&latest_version)?,
                     None => "0.0.1".into(),
                 },
