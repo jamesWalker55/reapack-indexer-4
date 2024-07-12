@@ -76,3 +76,21 @@ template_params!(
 pub(crate) fn generate_version_config(params: &VersionTemplateParams) -> String {
     VERSION_TEMPLATE.render(&params).unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_generate_repository_config() {
+        generate_repository_config(&RepositoryTemplateParams::default());
+    }
+    #[test]
+    fn can_generate_package_config() {
+        generate_package_config(&PackageTemplateParams::default());
+    }
+    #[test]
+    fn can_generate_version_config() {
+        generate_version_config(&VersionTemplateParams::default());
+    }
+}
