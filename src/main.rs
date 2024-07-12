@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             version,
             path,
         } => {
-            // check that the identifier and version is sane
+            // check that the identifier and version are sane
             {
                 let opt = sanitize_filename::Options {
                     truncate: true,  // true by default, truncates to 255 bytes
