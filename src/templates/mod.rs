@@ -27,8 +27,9 @@ macro_rules! template_params {
 
         impl<'a> $struct_name<'a> {
             $(
-                fn $field(&mut self, val: &'a str) {
+                pub(crate) fn $field(mut self, val: &'a str) -> Self {
                     self.$field = val;
+                    self
                 }
             )*
         }

@@ -126,6 +126,7 @@ pub(crate) struct Repo {
     /// Unique identifier for this repo.
     /// Will be used as the folder name to store the repo.
     identifier: String,
+    author: String,
     packages: Vec<Package>,
     desc: Option<String>,
 }
@@ -184,6 +185,7 @@ impl Repo {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
+            author: author.into(),
             packages,
             desc,
         })
@@ -200,7 +202,7 @@ impl Repo {
         Ok(pattern.into())
     }
 
-    fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+    pub(crate) fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut paths = vec![];
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
@@ -273,6 +275,14 @@ impl Repo {
         }
 
         index
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+
+    pub(crate) fn author(&self) -> &str {
+        &self.author
     }
 }
 
@@ -387,7 +397,7 @@ impl Package {
         })
     }
 
-    fn get_version_paths(dir: &Path) -> Result<Vec<PathBuf>> {
+    pub(crate) fn get_version_paths(dir: &Path) -> Result<Vec<PathBuf>> {
         let mut paths = vec![];
         for entry in fs::read_dir(dir)? {
             let entry = entry?;

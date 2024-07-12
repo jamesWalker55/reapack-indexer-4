@@ -3,7 +3,7 @@ use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-#[error("unable to parse this version string: {0}")]
+#[error("unable to parse this version string, please specify the new version manually: {0}")]
 pub(crate) struct UnknownVersionFormat(String);
 
 pub(crate) fn increment_version(text: &str) -> Result<String, UnknownVersionFormat> {
