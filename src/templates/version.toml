@@ -1,2 +1,2 @@
 # The publication date of this version. Must follow the RFC 3339 date format.
-time={time}
+time = "{time}"
