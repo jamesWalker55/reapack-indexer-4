@@ -17,22 +17,6 @@ use crate::config::{PackageConfig, PackageType, RepositoryConfig, VersionConfig}
 pub(crate) struct NotARepository(PathBuf);
 
 #[derive(Error, Debug)]
-#[error("section [{0}] must be defined in the config at: {1}\ndetails: {2}")]
-pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf, &'a str);
-
-#[derive(Error, Debug)]
-#[error("`{0}` must be defined in the config at: {1}\ndetails: {2}")]
-pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf, &'a str);
-
-#[derive(Error, Debug)]
-#[error("category for package `{0}` cannot be an absolute path: {1}")]
-pub(crate) struct PackageCategoryCannotBeAbsolutePath(String, PathBuf);
-
-#[derive(Error, Debug)]
-#[error("category for package `{0}` cannot contain '../': {1}")]
-pub(crate) struct PackageCategoryCannotContainParentDir(String, PathBuf);
-
-#[derive(Error, Debug)]
 #[error("unknown variable in URL pattern: `{0}`")]
 pub(crate) struct UnknownURLPatternVariable(String);
 
@@ -296,21 +280,13 @@ impl Package {
         let config_path = dir.join("package.toml");
         let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let name = config.name
+        let name = config
+            .name
             // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy().into_owned()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing(
-                "name",
-                config_path.clone(),
-                "This is the display name of the package, as seen in Reapack's package list browser",
-            ))?;
-        let identifier = config.identifier
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy().into_owned()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "This is the name of the folder where the package will be stored, defaults to the current package's folder name"))?;
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
+        let identifier = config
+            .identifier
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let author = config
