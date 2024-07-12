@@ -6,20 +6,24 @@ use std::{
     collections::HashSet,
     fs::{self, File},
     io::BufWriter,
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
 };
 
 use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use repo::Package;
-use templates::{PackageTemplateParams, VersionTemplateParams};
+use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
 use thiserror::Error;
 use version::{find_latest_version, increment_version};
 
 #[derive(Error, Debug)]
 #[error("repository does not exist: `{0}`")]
 pub(crate) struct RepositoryDoesNotExist(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("repository already exists: `{0}`")]
+pub(crate) struct RepositoryAlreadyExists(PathBuf);
 
 #[derive(Error, Debug)]
 #[error("package does not exist, please use `--new` to create a new package: `{0}`")]
@@ -66,7 +70,7 @@ enum Commands {
     },
     /// Add a new version of a package, by copying the given folder to the repository
     Publish {
-        /// Path to the folder to be processed
+        /// Path to the repository to add the package to
         #[arg(short, long)]
         repo: PathBuf,
         /// Whether to create a new package or not
@@ -79,6 +83,11 @@ enum Commands {
         path: PathBuf,
         /// Version of the package
         version: Option<String>,
+    },
+    /// Create a new repository
+    Init {
+        /// Path to the folder to initialise
+        repo: PathBuf,
     },
 }
 
@@ -223,6 +232,28 @@ fn main() -> Result<()> {
             }
 
             println!("Created version {}", &new_version);
+        }
+        Commands::Init { repo } => {
+            let repo = path::absolute(repo)?;
+            let repo_config_path = repo.join("repository.ini");
+            if repo_config_path.exists() {
+                return Err(RepositoryAlreadyExists(repo.into()).into());
+            }
+
+            let identifier = repo.file_name().map(|x| x.to_string_lossy());
+
+            let mut params = RepositoryTemplateParams::default();
+            if let Some(identifier) = &identifier {
+                params = params.identifier(&identifier);
+            }
+            let config_text = templates::generate_repository_config(&params);
+            fs::write(&repo_config_path, config_text)?;
+
+            println!("Created repository at {}", &repo.display());
+            println!(
+                "Please edit the repository configuration: {}",
+                &repo_config_path.to_string_lossy()
+            );
         }
     }
 
