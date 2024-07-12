@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::DateTime;
-use ini::Ini;
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
@@ -10,6 +9,8 @@ use std::{
 };
 use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
+
+use crate::config::{PackageConfig, PackageType, RepositoryConfig, VersionConfig};
 
 #[derive(Error, Debug)]
 #[error("the given path is not a repository (does not have a repository.toml file): {0}")]
@@ -140,31 +141,13 @@ impl Repo {
         if !config_path.exists() {
             return Err(NotARepository(dir).into());
         }
+        let config: RepositoryConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let ini = Ini::load_from_file(&config_path)?;
+        let identifier = config
+            .identifier
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().to_string());
 
-        let section = ini.section(Some("repository")).ok_or(ConfigSectionMissing(
-            "repository",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#index-element",
-        ))?;
-
-        let identifier = section
-            .get("identifier")
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy().to_string()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "The unique identifier for this repository. Should be unique to avoid conflicts with other folders with the same name."))?;
-        let author = section.get("author").ok_or(ConfigKeyMissing(
-            "author",
-            config_path.clone(),
-            "The author of packages within this repository",
-        ))?;
-        let url_pattern = section
-            .get("url_pattern")
-            .ok_or(ConfigKeyMissing("url_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
-        let url_pattern = Self::apply_url_pattern(&dir, url_pattern)?;
+        let url_pattern = Self::apply_url_pattern(&dir, &config.url_pattern)?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -174,7 +157,7 @@ impl Repo {
                     p,
                     PackageParams {
                         repo_path: &dir,
-                        author,
+                        author: &config.author,
                         url_pattern: &url_pattern,
                     },
                 )
@@ -185,7 +168,7 @@ impl Repo {
         Ok(Self {
             path: dir,
             identifier,
-            author: author.into(),
+            author: config.author,
             packages,
             desc,
         })
@@ -297,7 +280,7 @@ pub(crate) struct Package {
     /// Category for classification, not target folder.
     /// Must be a Path so I can reverse-engineer how many '../' to add to the source path.
     category: RelativePathBuf,
-    r#type: String,
+    r#type: PackageType,
     desc: Option<String>,
     versions: Vec<PackageVersion>,
 }
@@ -311,64 +294,29 @@ pub(crate) struct PackageParams<'a> {
 impl Package {
     pub(crate) fn read(dir: &Path, params: PackageParams) -> Result<Self> {
         let config_path = dir.join("package.toml");
-        let ini = Ini::load_from_file(&config_path)?;
+        let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let section = ini.section(Some("package")).ok_or(ConfigSectionMissing(
-            "package",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#reapack-element",
-        ))?;
-
-        let r#type = section.get("type").ok_or(ConfigKeyMissing(
-            "type",
-            config_path.clone(),
-            "Possible values are script, effect, extension, data, theme, langpack, webinterface, projectpl, tracktpl, midinotenames and autoitem",
-        ))?;
-
-        let name = section
-            .get("name")
-            .map(|x| x.into())
+        let name = config.name
             // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            .or(dir.file_name().map(|x| x.to_string_lossy().into_owned()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing(
                 "name",
                 config_path.clone(),
                 "This is the display name of the package, as seen in Reapack's package list browser",
             ))?;
-        let identifier = section
-            .get("identifier")
+        let identifier = config.identifier
             .map(|x| x.into())
             // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
+            .or(dir.file_name().map(|x| x.to_string_lossy().into_owned()))
             // if directory name is somehow missing, complain about config
             .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "This is the name of the folder where the package will be stored, defaults to the current package's folder name"))?;
-        let category = {
-            let text = section.get("category").ok_or(ConfigKeyMissing(
-                "category",
-                config_path.clone(),
-                "Used for organization in the package list. (Unlike the official tool, this does not control the target directory)",
-            ))?;
-            let relpath = RelativePathBuf::from_path(text)
-                .map(|p| p.normalize())
-                .map_err(|_| {
-                    PackageCategoryCannotBeAbsolutePath(name.to_string(), config_path.clone())
-                })?;
-            if relpath.starts_with("..") {
-                Err(PackageCategoryCannotContainParentDir(
-                    name.to_string(),
-                    config_path.clone(),
-                ))
-            } else {
-                Ok(relpath)
-            }
-        }?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
-        let author = section
-            .get("author")
+        let author = config
+            .author
             // default to params (required)
-            .unwrap_or(params.author);
+            .unwrap_or(params.author.into());
 
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(dir)?
             .iter()
@@ -377,9 +325,9 @@ impl Package {
                     p,
                     PackageVersionParams {
                         repo_path: params.repo_path,
-                        author,
+                        author: &author,
                         url_pattern: params.url_pattern,
-                        category: &category,
+                        category: &config.category,
                     },
                 )
             })
@@ -389,9 +337,9 @@ impl Package {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
-            category,
-            r#type: r#type.into(),
-            name: name.into(),
+            category: config.category.clone(),
+            r#type: config.r#type.clone(),
+            name,
             desc,
             versions,
         })
@@ -417,7 +365,7 @@ impl Package {
     fn element(&self) -> XMLElement {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name);
-        reapack.add_attribute("type", &self.r#type);
+        reapack.add_attribute("type", (&self.r#type).into());
         reapack.add_attribute("name", &self.identifier);
 
         // add description
@@ -459,77 +407,9 @@ pub(crate) struct PackageVersionParams<'a> {
 impl PackageVersion {
     pub(crate) fn read(dir: &Path, params: PackageVersionParams) -> Result<Self> {
         let config_path = dir.join("version.toml");
-        let ini = Ini::load_from_file(&config_path)?;
+        let config: VersionConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let section = ini.section(Some("version")).ok_or(ConfigSectionMissing(
-            "version",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#version-element",
-        ))?;
-
-        let name = section
-            .get("version")
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing(
-                "version",
-                config_path.clone(),
-                "This should be the version name, e.g. '0.0.1'. Defaults to the current version's folder name",
-            ))?;
-
-        let author = section
-            .get("author")
-            // default to params (required)
-            .unwrap_or(params.author);
-
-        let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
-            match section.get("time") {
-                Some(user_time) => match DateTime::parse_from_rfc3339(user_time) {
-                    Ok(user_time) => Ok(user_time.into()),
-                    Err(e) => {
-                        let prompt_msg = format!("Failed to parse version publication time set in: {}\nError: {:?}\nWould you like to use the current time as the publication time? (The publication time will be written to version.toml)", config_path.to_string_lossy(), e);
-                        let prompt = inquire::Confirm::new(&prompt_msg)
-                            .with_default(false)
-                            .prompt()?;
-                        if !prompt {
-                            Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
-                        } else {
-                            let time = chrono::Utc::now();
-
-                            let mut ini = ini.clone();
-
-                            ini.with_section(Some("version"))
-                                .set("time", time.to_rfc3339());
-                            ini.write_to_file(&config_path).unwrap();
-
-                            Ok(time)
-                        }
-                    }
-                },
-                None => {
-                    let prompt_msg = format!("Version publication time is not found in: {}\nWould you like to use the current time as the publication time? (The publication time will be written to version.toml)", config_path.to_string_lossy());
-                    let prompt = inquire::Confirm::new(&prompt_msg)
-                        .with_default(false)
-                        .prompt()?;
-                    if !prompt {
-                        Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
-                    } else {
-                        let time = chrono::Utc::now();
-
-                        let mut ini = ini.clone();
-
-                        ini.with_section(Some("version"))
-                            .set("time", time.to_rfc3339());
-                        ini.write_to_file(&config_path).unwrap();
-
-                        Ok(time)
-                    }
-                }
-            }
-        };
-        let time = time?;
+        let name = dir.file_name().unwrap().to_string_lossy();
 
         let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
 
@@ -568,10 +448,10 @@ impl PackageVersion {
         Ok(Self {
             path: dir.into(),
             name: name.into(),
-            time,
+            time: config.time,
             changelog,
             sources,
-            author: author.into(),
+            author: params.author.into(),
         })
     }
 

@@ -7,7 +7,8 @@ use thiserror::Error;
 
 /// As defined in:
 /// https://github.com/cfillion/reapack/blob/master/src/package.cpp#L36
-enum PackageType {
+#[derive(Debug, Clone)]
+pub(crate) enum PackageType {
     Script,          // script
     Extension,       // extension
     Effect,          // effect
@@ -86,22 +87,22 @@ impl<'de> Deserialize<'de> for PackageType {
 }
 
 #[derive(Serialize, Deserialize)]
-struct RepositoryConfig {
-    identifier: Option<String>,
-    author: String,
-    url_pattern: String,
+pub(crate) struct RepositoryConfig {
+    pub(crate) identifier: Option<String>,
+    pub(crate) author: String,
+    pub(crate) url_pattern: String,
 }
 
 #[derive(Serialize, Deserialize)]
-struct PackageConfig {
-    name: String,
-    category: RelativePathBuf,
-    r#type: PackageType,
-    identifier: Option<String>,
-    author: Option<String>,
+pub(crate) struct PackageConfig {
+    pub(crate) name: Option<String>,
+    pub(crate) category: RelativePathBuf,
+    pub(crate) r#type: PackageType,
+    pub(crate) identifier: Option<String>,
+    pub(crate) author: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct VersionConfig {
-    time: DateTime<Utc>,
+pub(crate) struct VersionConfig {
+    pub(crate) time: DateTime<Utc>,
 }
