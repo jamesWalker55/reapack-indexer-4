@@ -136,7 +136,7 @@ fn main() -> Result<()> {
             new,
         } => {
             // check that repository exists
-            if !repo.join("repository.ini").exists() {
+            if !repo.join("repository.toml").exists() {
                 return Err(RepositoryDoesNotExist(repo.into()).into());
             }
 
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
             }
 
             let pkg_path = repo.join(identifier);
-            let pkg_config_path = pkg_path.join("package.ini");
+            let pkg_config_path = pkg_path.join("package.toml");
             if *new {
                 if pkg_config_path.exists() {
                     return Err(PackageAlreadyExists(pkg_path).into());
@@ -215,7 +215,7 @@ fn main() -> Result<()> {
                 },
             };
             let ver_path = pkg_path.join(&new_version);
-            let ver_config_path = ver_path.join("version.ini");
+            let ver_config_path = ver_path.join("version.toml");
 
             // create package dir
             if !ver_path.exists() {
@@ -248,7 +248,7 @@ fn main() -> Result<()> {
         }
         Commands::Init { repo } => {
             let repo = path::absolute(repo)?;
-            let repo_config_path = repo.join("repository.ini");
+            let repo_config_path = repo.join("repository.toml");
             if repo_config_path.exists() {
                 return Err(RepositoryAlreadyExists(repo).into());
             }

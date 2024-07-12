@@ -1,0 +1,12 @@
+# The default author of packages in this repository.
+author={author}
+
+# A template string to generate URLs for source links.
+# The following variables are supported:
+#   git_commit - The current commit hash of the repository. Requires `git` to be installed and available in $PATH
+#   relpath - The path to the source path, relative to the root of the repository
+url_pattern={url_pattern}
+
+# # Optional: The name of the output folder containing this repository.
+# # Defaults to the actual folder name of the current repository.
+# identifier={identifier}

@@ -12,7 +12,7 @@ use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
 #[derive(Error, Debug)]
-#[error("the given path is not a repository (does not have a repository.ini file): {0}")]
+#[error("the given path is not a repository (does not have a repository.toml file): {0}")]
 pub(crate) struct NotARepository(PathBuf);
 
 #[derive(Error, Debug)]
@@ -136,7 +136,7 @@ impl Repo {
         // convert to absolute path to ensure we can get the folder names etc
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
-        let config_path = dir.join("repository.ini");
+        let config_path = dir.join("repository.toml");
         if !config_path.exists() {
             return Err(NotARepository(dir).into());
         }
@@ -211,7 +211,7 @@ impl Repo {
                 continue;
             }
             let path = entry.path();
-            if !path.join("package.ini").exists() {
+            if !path.join("package.toml").exists() {
                 continue;
             }
             paths.push(path);
@@ -310,7 +310,7 @@ pub(crate) struct PackageParams<'a> {
 
 impl Package {
     pub(crate) fn read(dir: &Path, params: PackageParams) -> Result<Self> {
-        let config_path = dir.join("package.ini");
+        let config_path = dir.join("package.toml");
         let ini = Ini::load_from_file(&config_path)?;
 
         let section = ini.section(Some("package")).ok_or(ConfigSectionMissing(
@@ -406,7 +406,7 @@ impl Package {
                 continue;
             }
             let path = entry.path();
-            if !path.join("version.ini").exists() {
+            if !path.join("version.toml").exists() {
                 continue;
             }
             paths.push(path);
@@ -458,7 +458,7 @@ pub(crate) struct PackageVersionParams<'a> {
 
 impl PackageVersion {
     pub(crate) fn read(dir: &Path, params: PackageVersionParams) -> Result<Self> {
-        let config_path = dir.join("version.ini");
+        let config_path = dir.join("version.toml");
         let ini = Ini::load_from_file(&config_path)?;
 
         let section = ini.section(Some("version")).ok_or(ConfigSectionMissing(
@@ -489,7 +489,7 @@ impl PackageVersion {
                 Some(user_time) => match DateTime::parse_from_rfc3339(user_time) {
                     Ok(user_time) => Ok(user_time.into()),
                     Err(e) => {
-                        let prompt_msg = format!("Failed to parse version publication time set in: {}\nError: {:?}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy(), e);
+                        let prompt_msg = format!("Failed to parse version publication time set in: {}\nError: {:?}\nWould you like to use the current time as the publication time? (The publication time will be written to version.toml)", config_path.to_string_lossy(), e);
                         let prompt = inquire::Confirm::new(&prompt_msg)
                             .with_default(false)
                             .prompt()?;
@@ -509,7 +509,7 @@ impl PackageVersion {
                     }
                 },
                 None => {
-                    let prompt_msg = format!("Version publication time is not found in: {}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy());
+                    let prompt_msg = format!("Version publication time is not found in: {}\nWould you like to use the current time as the publication time? (The publication time will be written to version.toml)", config_path.to_string_lossy());
                     let prompt = inquire::Confirm::new(&prompt_msg)
                         .with_default(false)
                         .prompt()?;

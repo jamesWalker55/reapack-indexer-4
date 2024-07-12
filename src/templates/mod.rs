@@ -1,9 +1,9 @@
 use leon::{Template, Values};
 use once_cell::sync::Lazy;
 
-const REPOSITORY_STR: &str = include_str!("repository.ini");
-const PACKAGE_STR: &str = include_str!("package.ini");
-const VERSION_STR: &str = include_str!("version.ini");
+const REPOSITORY_STR: &str = include_str!("repository.toml");
+const PACKAGE_STR: &str = include_str!("package.toml");
+const VERSION_STR: &str = include_str!("version.toml");
 
 static REPOSITORY_TEMPLATE: Lazy<Template> = Lazy::new(|| Template::parse(REPOSITORY_STR).unwrap());
 static PACKAGE_TEMPLATE: Lazy<Template> = Lazy::new(|| Template::parse(PACKAGE_STR).unwrap());
