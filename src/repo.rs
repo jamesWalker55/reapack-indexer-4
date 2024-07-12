@@ -1,39 +1,41 @@
 use anyhow::Result;
 use chrono::DateTime;
-use ini::Ini;
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
+use crate::config::{
+    ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig,
+};
+
+type Entrypoints = HashMap<ActionListSection, GlobSet>;
+
 #[derive(Error, Debug)]
-#[error("the given path is not a repository (does not have a repository.ini file): {0}")]
+#[error("the given path is not a repository (does not have a repository.toml file): {0}")]
 pub(crate) struct NotARepository(PathBuf);
-
-#[derive(Error, Debug)]
-#[error("section [{0}] must be defined in the config at: {1}\ndetails: {2}")]
-pub(crate) struct ConfigSectionMissing<'a>(&'a str, PathBuf, &'a str);
-
-#[derive(Error, Debug)]
-#[error("`{0}` must be defined in the config at: {1}\ndetails: {2}")]
-pub(crate) struct ConfigKeyMissing<'a>(&'a str, PathBuf, &'a str);
-
-#[derive(Error, Debug)]
-#[error("category for package `{0}` cannot be an absolute path: {1}")]
-pub(crate) struct PackageCategoryCannotBeAbsolutePath(String, PathBuf);
-
-#[derive(Error, Debug)]
-#[error("category for package `{0}` cannot contain '../': {1}")]
-pub(crate) struct PackageCategoryCannotContainParentDir(String, PathBuf);
 
 #[derive(Error, Debug)]
 #[error("unknown variable in URL pattern: `{0}`")]
 pub(crate) struct UnknownURLPatternVariable(String);
+
+#[derive(Error, Debug)]
+#[error("entrypoints can only be defined in packages with type = \"script\": `{0}`")]
+pub(crate) struct EntrypointsOnlyAllowedInScriptPackages(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("script packages must have entrypoints defined: `{0}`")]
+pub(crate) struct NoEntrypointsDefinedForScriptPackage(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("entrypoints is defined in config, but no files were matched: `{0}`")]
+pub(crate) struct NoEntrypointsFoundForScriptPackage(PathBuf);
 
 #[derive(Error, Debug)]
 #[error("pandoc is required for converting Markdown files to RTF, please specify the path to the pandoc executable with --pandoc")]
@@ -136,35 +138,17 @@ impl Repo {
         // convert to absolute path to ensure we can get the folder names etc
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
-        let config_path = dir.join("repository.ini");
+        let config_path = dir.join("repository.toml");
         if !config_path.exists() {
             return Err(NotARepository(dir).into());
         }
+        let config: RepositoryConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let ini = Ini::load_from_file(&config_path)?;
+        let identifier = config
+            .identifier
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().to_string());
 
-        let section = ini.section(Some("repository")).ok_or(ConfigSectionMissing(
-            "repository",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#index-element",
-        ))?;
-
-        let identifier = section
-            .get("identifier")
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy().to_string()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "The unique identifier for this repository. Should be unique to avoid conflicts with other folders with the same name."))?;
-        let author = section.get("author").ok_or(ConfigKeyMissing(
-            "author",
-            config_path.clone(),
-            "The author of packages within this repository",
-        ))?;
-        let url_pattern = section
-            .get("url_pattern")
-            .ok_or(ConfigKeyMissing("url_pattern", config_path.clone(), "A string template that is used to generate the URLs of package source files. E.g.: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPOSITORY/{git_commit}/{relpath}"))?;
-        let url_pattern = Self::apply_url_pattern(&dir, url_pattern)?;
+        let url_pattern = Self::apply_url_pattern(&dir, &config.url_pattern)?;
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
         let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
@@ -174,7 +158,7 @@ impl Repo {
                     p,
                     PackageParams {
                         repo_path: &dir,
-                        author,
+                        author: &config.author,
                         url_pattern: &url_pattern,
                     },
                 )
@@ -185,7 +169,7 @@ impl Repo {
         Ok(Self {
             path: dir,
             identifier,
-            author: author.into(),
+            author: config.author,
             packages,
             desc,
         })
@@ -211,7 +195,7 @@ impl Repo {
                 continue;
             }
             let path = entry.path();
-            if !path.join("package.ini").exists() {
+            if !path.join("package.toml").exists() {
                 continue;
             }
             paths.push(path);
@@ -297,7 +281,7 @@ pub(crate) struct Package {
     /// Category for classification, not target folder.
     /// Must be a Path so I can reverse-engineer how many '../' to add to the source path.
     category: RelativePathBuf,
-    r#type: String,
+    r#type: PackageType,
     desc: Option<String>,
     versions: Vec<PackageVersion>,
 }
@@ -310,65 +294,44 @@ pub(crate) struct PackageParams<'a> {
 
 impl Package {
     pub(crate) fn read(dir: &Path, params: PackageParams) -> Result<Self> {
-        let config_path = dir.join("package.ini");
-        let ini = Ini::load_from_file(&config_path)?;
+        let config_path = dir.join("package.toml");
+        let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let section = ini.section(Some("package")).ok_or(ConfigSectionMissing(
-            "package",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#reapack-element",
-        ))?;
-
-        let r#type = section.get("type").ok_or(ConfigKeyMissing(
-            "type",
-            config_path.clone(),
-            "Possible values are script, effect, extension, data, theme, langpack, webinterface, projectpl, tracktpl, midinotenames and autoitem",
-        ))?;
-
-        let name = section
-            .get("name")
-            .map(|x| x.into())
+        let name = config
+            .name
             // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing(
-                "name",
-                config_path.clone(),
-                "This is the display name of the package, as seen in Reapack's package list browser",
-            ))?;
-        let identifier = section
-            .get("identifier")
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing("identifier", config_path.clone(), "This is the name of the folder where the package will be stored, defaults to the current package's folder name"))?;
-        let category = {
-            let text = section.get("category").ok_or(ConfigKeyMissing(
-                "category",
-                config_path.clone(),
-                "Used for organization in the package list. (Unlike the official tool, this does not control the target directory)",
-            ))?;
-            let relpath = RelativePathBuf::from_path(text)
-                .map(|p| p.normalize())
-                .map_err(|_| {
-                    PackageCategoryCannotBeAbsolutePath(name.to_string(), config_path.clone())
-                })?;
-            if relpath.starts_with("..") {
-                Err(PackageCategoryCannotContainParentDir(
-                    name.to_string(),
-                    config_path.clone(),
-                ))
-            } else {
-                Ok(relpath)
-            }
-        }?;
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
+        let identifier = config
+            .identifier
+            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
         let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
 
-        let author = section
-            .get("author")
+        let author = config
+            .author
             // default to params (required)
-            .unwrap_or(params.author);
+            .unwrap_or(params.author.into());
+
+        if config.entrypoints.is_some() && config.r#type != PackageType::Script {
+            return Err(EntrypointsOnlyAllowedInScriptPackages(config_path).into());
+        }
+        if config.entrypoints.is_none() && config.r#type == PackageType::Script {
+            return Err(NoEntrypointsDefinedForScriptPackage(config_path).into());
+        }
+        let entrypoints: Option<Entrypoints> = config
+            .entrypoints
+            .map(|entrypoints| {
+                let mut result: Entrypoints = HashMap::new();
+                for (section, patterns) in entrypoints.into_iter() {
+                    let mut builder = GlobSetBuilder::new();
+                    for pattern in patterns {
+                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
+                    }
+                    let set = builder.build()?;
+                    result.insert(section, set);
+                }
+                Ok::<_, globset::Error>(result)
+            })
+            .transpose()?;
 
         let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(dir)?
             .iter()
@@ -377,9 +340,10 @@ impl Package {
                     p,
                     PackageVersionParams {
                         repo_path: params.repo_path,
-                        author,
+                        author: &author,
                         url_pattern: params.url_pattern,
-                        category: &category,
+                        category: &config.category,
+                        entrypoints: &entrypoints.as_ref(),
                     },
                 )
             })
@@ -389,9 +353,9 @@ impl Package {
         Ok(Self {
             path: dir.into(),
             identifier: identifier.into(),
-            category,
-            r#type: r#type.into(),
-            name: name.into(),
+            category: config.category.clone(),
+            r#type: config.r#type.clone(),
+            name,
             desc,
             versions,
         })
@@ -406,7 +370,7 @@ impl Package {
                 continue;
             }
             let path = entry.path();
-            if !path.join("version.ini").exists() {
+            if !path.join("version.toml").exists() {
                 continue;
             }
             paths.push(path);
@@ -417,7 +381,7 @@ impl Package {
     fn element(&self) -> XMLElement {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name);
-        reapack.add_attribute("type", &self.r#type);
+        reapack.add_attribute("type", (&self.r#type).into());
         reapack.add_attribute("name", &self.identifier);
 
         // add description
@@ -454,84 +418,34 @@ pub(crate) struct PackageVersionParams<'a> {
     repo_path: &'a Path,
     url_pattern: &'a str,
     category: &'a RelativePath,
+    entrypoints: &'a Option<&'a Entrypoints>,
 }
 
 impl PackageVersion {
     pub(crate) fn read(dir: &Path, params: PackageVersionParams) -> Result<Self> {
-        let config_path = dir.join("version.ini");
-        let ini = Ini::load_from_file(&config_path)?;
+        let config_path = dir.join("version.toml");
+        let config: VersionConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let section = ini.section(Some("version")).ok_or(ConfigSectionMissing(
-            "version",
-            config_path.clone(),
-            "https://github.com/cfillion/reapack/wiki/Index-Format#version-element",
-        ))?;
-
-        let name = section
-            .get("version")
-            .map(|x| x.into())
-            // default to directory name
-            .or(dir.file_name().map(|x| x.to_string_lossy()))
-            // if directory name is somehow missing, complain about config
-            .ok_or(ConfigKeyMissing(
-                "version",
-                config_path.clone(),
-                "This should be the version name, e.g. '0.0.1'. Defaults to the current version's folder name",
-            ))?;
-
-        let author = section
-            .get("author")
-            // default to params (required)
-            .unwrap_or(params.author);
-
-        let time: std::result::Result<DateTime<chrono::Utc>, ConfigKeyMissing> = {
-            match section.get("time") {
-                Some(user_time) => match DateTime::parse_from_rfc3339(user_time) {
-                    Ok(user_time) => Ok(user_time.into()),
-                    Err(e) => {
-                        let prompt_msg = format!("Failed to parse version publication time set in: {}\nError: {:?}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy(), e);
-                        let prompt = inquire::Confirm::new(&prompt_msg)
-                            .with_default(false)
-                            .prompt()?;
-                        if !prompt {
-                            Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
-                        } else {
-                            let time = chrono::Utc::now();
-
-                            let mut ini = ini.clone();
-
-                            ini.with_section(Some("version"))
-                                .set("time", time.to_rfc3339());
-                            ini.write_to_file(&config_path).unwrap();
-
-                            Ok(time)
-                        }
-                    }
-                },
-                None => {
-                    let prompt_msg = format!("Version publication time is not found in: {}\nWould you like to use the current time as the publication time? (The publication time will be written to version.ini)", config_path.to_string_lossy());
-                    let prompt = inquire::Confirm::new(&prompt_msg)
-                        .with_default(false)
-                        .prompt()?;
-                    if !prompt {
-                        Err(ConfigKeyMissing("time", config_path.clone(), "This should be the publication time, using the RFC 3339 / ISO 8601 format. E.g. 1996-12-19T16:39:57-08:00"))
-                    } else {
-                        let time = chrono::Utc::now();
-
-                        let mut ini = ini.clone();
-
-                        ini.with_section(Some("version"))
-                            .set("time", time.to_rfc3339());
-                        ini.write_to_file(&config_path).unwrap();
-
-                        Ok(time)
-                    }
-                }
-            }
-        };
-        let time = time?;
+        let name = dir.file_name().unwrap().to_string_lossy();
 
         let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
+
+        let entrypoints: Option<Entrypoints> = config
+            .entrypoints
+            .map(|entrypoints| {
+                let mut result: Entrypoints = HashMap::new();
+                for (section, patterns) in entrypoints.into_iter() {
+                    let mut builder = GlobSetBuilder::new();
+                    for pattern in patterns {
+                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
+                    }
+                    let set = builder.build()?;
+                    result.insert(section, set);
+                }
+                Ok::<_, globset::Error>(result)
+            })
+            .transpose()?;
+        let entrypoints = &entrypoints.as_ref().or(*params.entrypoints);
 
         let sources: Result<Vec<_>> = walkdir::WalkDir::new(dir)
             .into_iter()
@@ -552,8 +466,10 @@ impl PackageVersion {
                         &path,
                         SourceParams {
                             repo_path: params.repo_path,
+                            version_path: dir,
                             url_pattern: params.url_pattern,
                             category: params.category,
+                            entrypoints: entrypoints,
                         },
                     ))
                 }
@@ -565,13 +481,20 @@ impl PackageVersion {
             .collect();
         let sources = sources?;
 
+        if entrypoints.is_some() {
+            let has_entrypoint_files = sources.iter().any(|x| x.sections.len() > 0);
+            if !has_entrypoint_files {
+                return Err(NoEntrypointsFoundForScriptPackage(config_path).into());
+            }
+        }
+
         Ok(Self {
             path: dir.into(),
             name: name.into(),
-            time,
+            time: config.time,
             changelog,
             sources,
-            author: author.into(),
+            author: params.author.into(),
         })
     }
 
@@ -598,59 +521,45 @@ impl PackageVersion {
 }
 
 #[derive(Debug)]
-enum ActionListSection {
-    Main,
-    MidiEditor,
-    MidiInlineeditor,
-    MidiEventlisteditor,
-    MediaExplorer,
-}
-
-impl From<&ActionListSection> for &str {
-    fn from(val: &ActionListSection) -> Self {
-        match val {
-            ActionListSection::Main => "main",
-            ActionListSection::MidiEditor => "midi_editor",
-            ActionListSection::MidiInlineeditor => "midi_inlineeditor",
-            ActionListSection::MidiEventlisteditor => "midi_eventlisteditor",
-            ActionListSection::MediaExplorer => "mediaexplorer",
-        }
-    }
-}
-
-impl TryFrom<&str> for ActionListSection {
-    type Error = ();
-
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
-        match value {
-            "main" => Ok(ActionListSection::Main),
-            "midi_editor" => Ok(ActionListSection::MidiEditor),
-            "midi_inlineeditor" => Ok(ActionListSection::MidiInlineeditor),
-            "midi_eventlisteditor" => Ok(ActionListSection::MidiEventlisteditor),
-            "mediaexplorer" => Ok(ActionListSection::MediaExplorer),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub(crate) struct Source {
     /// ReaPack's 'file' path, relative to the generated category folder path
     output_relpath: RelativePathBuf,
-    sections: Vec<ActionListSection>,
+    sections: HashSet<ActionListSection>,
     url: String,
 }
 
 struct SourceParams<'a> {
     repo_path: &'a Path,
+    version_path: &'a Path,
     category: &'a RelativePath,
     url_pattern: &'a str,
+    entrypoints: &'a Option<&'a Entrypoints>,
 }
 
 impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
         // path of source file relative to repository root
         let relpath = path.relative_to(params.repo_path)?;
+        // path of source file relative to version root
+        let relpath_to_version = path.relative_to(params.version_path)?;
+
+        let sections = match params.entrypoints {
+            Some(entrypoints) => entrypoints
+                .iter()
+                .filter_map(|(section, globset)| {
+                    // Use '.to_string()' instead of '.to_path(".")'!!
+                    // Because '.to_path(".")' adds a './' to the beginning of the path, messing up the glob matcher,
+                    // while '.to_string()' does not add a './' and keeps the path as-is.
+                    let matches = globset.matches(relpath_to_version.to_string());
+                    if matches.is_empty() {
+                        None
+                    } else {
+                        Some(*section)
+                    }
+                })
+                .collect(),
+            None => HashSet::new(),
+        };
 
         let url_pattern = Self::apply_url_pattern(&relpath, params.url_pattern)?;
         let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
@@ -667,7 +576,7 @@ impl Source {
         Ok(Self {
             output_relpath: output_path,
             // TODO: Determine sections
-            sections: vec![],
+            sections,
             url: url_pattern,
         })
     }

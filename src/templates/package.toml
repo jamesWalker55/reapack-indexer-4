@@ -1,0 +1,27 @@
+# Display name of this package
+name = "{name}"
+
+# The category of this package, used by Reapack for classification.
+# (This has no effect on the output path of your repository / packages)
+category = "{category}"
+
+# The package type, used by Reapack for classification.
+# For available choices, see: https://github.com/cfillion/reapack/wiki/Index-Format#reapack-element
+type = "{typ}"
+
+# # Optional: The name of the output folder containing this package.
+# # Defaults to the actual folder name of the current package.
+# identifier = "{identifier}"
+
+# # Optional: Override the author for this package.
+# # Defaults to the repository's configured author
+# author = "{author}"
+
+# For scripts, define the files to be added to the action list here.
+# Glob patterns are supported as well.
+[entrypoints]
+main = ["My script.lua"]
+# midi_editor = []
+# midi_inlineeditor = []
+# midi_eventlisteditor = []
+# mediaexplorer = []

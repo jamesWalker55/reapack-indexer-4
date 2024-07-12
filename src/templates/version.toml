@@ -1,0 +1,6 @@
+# The publication date of this version. Must follow the RFC 3339 date format.
+time = "{time}"
+
+# # Optional: Override entrypoints defined in the package configuration.
+# [entrypoints]
+# main = ["My other script.lua"]

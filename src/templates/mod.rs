@@ -1,9 +1,9 @@
 use leon::{Template, Values};
 use once_cell::sync::Lazy;
 
-const REPOSITORY_STR: &str = include_str!("repository.ini");
-const PACKAGE_STR: &str = include_str!("package.ini");
-const VERSION_STR: &str = include_str!("version.ini");
+const REPOSITORY_STR: &str = include_str!("repository.toml");
+const PACKAGE_STR: &str = include_str!("package.toml");
+const VERSION_STR: &str = include_str!("version.toml");
 
 static REPOSITORY_TEMPLATE: Lazy<Template> = Lazy::new(|| Template::parse(REPOSITORY_STR).unwrap());
 static PACKAGE_TEMPLATE: Lazy<Template> = Lazy::new(|| Template::parse(PACKAGE_STR).unwrap());
@@ -79,6 +79,8 @@ pub(crate) fn generate_version_config(params: &VersionTemplateParams) -> String 
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{PackageConfig, RepositoryConfig, VersionConfig};
+
     use super::*;
 
     #[test]
@@ -92,5 +94,21 @@ mod tests {
     #[test]
     fn can_generate_version_config() {
         generate_version_config(&VersionTemplateParams::default());
+    }
+
+    #[test]
+    fn generated_repository_config_is_valid() {
+        let text = generate_repository_config(&RepositoryTemplateParams::default());
+        let _: RepositoryConfig = toml::from_str(&text).unwrap();
+    }
+    #[test]
+    fn generated_package_config_is_valid() {
+        let text = generate_package_config(&PackageTemplateParams::default());
+        let _: PackageConfig = toml::from_str(&text).unwrap();
+    }
+    #[test]
+    fn generated_version_config_is_valid() {
+        let text = generate_version_config(&VersionTemplateParams::default());
+        let _: VersionConfig = toml::from_str(&text).unwrap();
     }
 }
