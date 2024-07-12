@@ -1,4 +1,5 @@
 mod repo;
+mod templates;
 
 use std::{fs::File, io::BufWriter, path::PathBuf};
 
