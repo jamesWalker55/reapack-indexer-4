@@ -89,6 +89,19 @@ enum Commands {
         /// Path to the folder to initialise
         repo: PathBuf,
     },
+    /// Show a configuration file template
+    Template {
+        /// The type of configuration to show
+        #[command(subcommand)]
+        template: TemplateType,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateType {
+    Repository,
+    Package,
+    Version,
 }
 
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
@@ -254,6 +267,20 @@ fn main() -> Result<()> {
                 "Please edit the repository configuration: {}",
                 &repo_config_path.to_string_lossy()
             );
+        }
+        Commands::Template { template } => {
+            let text = match template {
+                TemplateType::Repository => {
+                    templates::generate_repository_config(&RepositoryTemplateParams::default())
+                }
+                TemplateType::Package => {
+                    templates::generate_package_config(&PackageTemplateParams::default())
+                }
+                TemplateType::Version => {
+                    templates::generate_version_config(&VersionTemplateParams::default())
+                }
+            };
+            println!("{}", text);
         }
     }
 
