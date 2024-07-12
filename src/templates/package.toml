@@ -16,3 +16,12 @@ type = "{typ}"
 # # Optional: Override the author for this package.
 # # Defaults to the repository's configured author
 # author = "{author}"
+
+# For scripts, define the files to be added to the action list here.
+# Glob patterns are supported as well.
+[entrypoints]
+main = ["My script.lua"]
+# midi_editor = []
+# midi_inlineeditor = []
+# midi_eventlisteditor = []
+# mediaexplorer = []
