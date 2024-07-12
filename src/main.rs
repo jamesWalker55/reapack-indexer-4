@@ -242,10 +242,14 @@ fn main() -> Result<()> {
                 let config_text = templates::generate_version_config(
                     &VersionTemplateParams::default().time(&current_time),
                 );
-                fs::write(ver_config_path, config_text)?;
+                fs::write(&ver_config_path, config_text)?;
             }
 
             println!("Created version {}", &new_version);
+            println!(
+                "Please edit the version configuration file: {}",
+                ver_config_path.display()
+            );
         }
         Commands::Init { repo } => {
             let repo = path::absolute(repo)?;
