@@ -19,10 +19,6 @@ use thiserror::Error;
 use version::{find_latest_version, increment_version};
 
 #[derive(Error, Debug)]
-#[error("repository does not exist: `{0}`")]
-pub(crate) struct RepositoryDoesNotExist(PathBuf);
-
-#[derive(Error, Debug)]
 #[error("repository already exists: `{0}`")]
 pub(crate) struct RepositoryAlreadyExists(PathBuf);
 

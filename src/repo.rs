@@ -114,7 +114,7 @@ fn url_encode_path(path: &RelativePath) -> String {
 }
 
 #[derive(Error, Debug)]
-enum GitCommitError {
+pub(crate) enum GitCommitError {
     #[error("failed to launch git, please ensure it is accessible through the command line")]
     FailedToLaunchGit,
     #[error("failed to get commit hash in the given path: {0}")]
