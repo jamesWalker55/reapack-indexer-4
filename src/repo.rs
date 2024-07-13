@@ -539,9 +539,7 @@ impl Version {
         // add sources
         let sources = self.sources()?;
         for source in sources.iter() {
-            version
-                .add_child(source.element(repo, pkg, self)?)
-                .unwrap();
+            version.add_child(source.element(repo, pkg, self)?).unwrap();
         }
 
         // for script packages, check there is at least one entrypoint
@@ -709,10 +707,7 @@ impl Source {
     fn element(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<XMLElement> {
         let mut source = XMLElement::new("source");
         source.add_text(self.url(repo, pkg, ver)?).unwrap();
-        source.add_attribute(
-            "file",
-            self.output_relpath_from_category(pkg, ver).as_ref(),
-        );
+        source.add_attribute("file", self.output_relpath_from_category(pkg, ver).as_ref());
 
         // TODO: Implement setting "type" attribute
         // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
@@ -740,9 +735,7 @@ impl Source {
                 }
             } else if let Some(entrypoints) = entrypoints {
                 if entrypoints.iter().any(|(_, pattern)| !pattern.is_empty()) {
-                    return Err(
-                        EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into()
-                    );
+                    return Err(EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into());
                 }
             }
             let relpath_to_ver = self.relpath_from_version(ver);
