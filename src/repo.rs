@@ -168,10 +168,15 @@ impl Repo {
     const CONFIG_FILENAME: &'static str = "repository.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
-        debug_assert!(dir == path::absolute(dir).unwrap());
-
         // convert to absolute path to ensure we can get the folder names etc
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
+
+        debug_assert!(
+            dir == path::absolute(&dir).unwrap(),
+            "dir = {} ; absolute(dir) = {}",
+            dir.display(),
+            path::absolute(&dir).unwrap().display()
+        );
 
         let config_path = dir.join(Self::CONFIG_FILENAME);
         if !config_path.exists() {
@@ -294,7 +299,12 @@ impl Package {
     const CONFIG_FILENAME: &'static str = "package.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
-        debug_assert!(dir == path::absolute(dir).unwrap());
+        debug_assert!(
+            dir == path::absolute(&dir).unwrap(),
+            "dir = {} ; absolute(dir) = {}",
+            dir.display(),
+            path::absolute(&dir).unwrap().display()
+        );
 
         let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: PackageConfig = toml::from_str(&fs::read_to_string(config_path)?)?;
@@ -432,7 +442,12 @@ impl Version {
     const CONFIG_FILENAME: &'static str = "version.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
-        debug_assert!(dir == path::absolute(dir).unwrap());
+        debug_assert!(
+            dir == path::absolute(&dir).unwrap(),
+            "dir = {} ; absolute(dir) = {}",
+            dir.display(),
+            path::absolute(&dir).unwrap().display()
+        );
 
         let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: VersionConfig = toml::from_str(&fs::read_to_string(config_path)?)?;
@@ -600,7 +615,12 @@ pub(crate) struct Source {
 
 impl Source {
     fn read(path: &Path) -> Self {
-        debug_assert!(path == path::absolute(path).unwrap());
+        debug_assert!(
+            path == path::absolute(&path).unwrap(),
+            "path = {} ; absolute(path) = {}",
+            path.display(),
+            path::absolute(&path).unwrap().display()
+        );
 
         Self {
             path: path.into(),
