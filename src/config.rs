@@ -158,6 +158,7 @@ pub(crate) struct RepositoryConfig {
 pub(crate) struct PackageConfig {
     pub(crate) name: Option<String>,
     pub(crate) category: RelativePathBuf,
+    #[serde(rename = "type")]
     pub(crate) pkg_type: PackageType,
     pub(crate) identifier: Option<String>,
     pub(crate) author: Option<String>,
