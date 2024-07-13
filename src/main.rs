@@ -4,6 +4,7 @@ mod templates;
 mod version;
 
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fs::{self, File},
     io::BufWriter,
@@ -67,6 +68,7 @@ enum Commands {
         #[arg(short, long)]
         repo: PathBuf,
         /// Path to write the generated Reapack index XML file
+        #[arg(default_value = "index.xml")]
         output_path: PathBuf,
     },
     /// Add a new version of a package, by copying the given folder to the repository
@@ -124,10 +126,17 @@ fn main() -> Result<()> {
 
     match &args.command {
         Commands::Export { output_path, repo } => {
+            let output_path: Cow<Path> = if output_path.exists() && output_path.metadata()?.is_dir()
+            {
+                output_path.join("index.xml").into()
+            } else {
+                output_path.into()
+            };
+
             let repo = repo::Repo::read(repo)?;
-            let f = File::create(output_path)?;
-            let mut f = BufWriter::new(f);
-            repo.generate_index(&mut f).unwrap();
+            let index = repo.generate_index()?;
+            fs::write(&output_path, &index)?;
+            println!("Wrote repository index to: {}", output_path.display());
         }
         Commands::Publish {
             identifier,

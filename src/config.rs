@@ -147,14 +147,14 @@ impl<'de> Deserialize<'de> for ActionListSection {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RepositoryConfig {
     pub(crate) identifier: Option<String>,
     pub(crate) author: String,
     pub(crate) url_pattern: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct PackageConfig {
     pub(crate) name: Option<String>,
     pub(crate) category: RelativePathBuf,

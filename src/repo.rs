@@ -4,6 +4,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fs::{self},
     path::{Path, PathBuf},
@@ -137,107 +138,74 @@ fn get_git_commit(dir: &Path) -> Result<String> {
 
 #[derive(Debug)]
 pub(crate) struct Repo {
+    /// Must be an absolute path
     path: PathBuf,
-    /// Unique identifier for this repo.
-    /// Will be used as the folder name to store the repo.
-    identifier: String,
-    author: String,
+    config: RepositoryConfig,
     packages: Vec<Package>,
-    desc: Option<String>,
 }
 
 impl Repo {
+    const CONFIG_FILENAME: &'static str = "repository.toml";
+
     pub(crate) fn read(dir: &Path) -> Result<Self> {
         // convert to absolute path to ensure we can get the folder names etc
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
-        let config_path = dir.join("repository.toml");
+        let config_path = dir.join(Self::CONFIG_FILENAME);
         if !config_path.exists() {
             return Err(NotARepository(dir).into());
         }
         let config: RepositoryConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let identifier = config
-            .identifier
-            .unwrap_or(dir.file_name().unwrap().to_string_lossy().to_string());
-
-        let url_pattern = Self::apply_url_pattern(&dir, &config.url_pattern)?;
-        let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
-
-        let packages: Result<Vec<Package>> = Self::get_package_paths(&dir)?
-            .iter()
-            .map(|p| {
-                Package::read(
-                    p,
-                    PackageParams {
-                        repo_path: &dir,
-                        author: &config.author,
-                        url_pattern: &url_pattern,
-                    },
-                )
-            })
-            .collect();
-        let packages = packages?;
-
-        Ok(Self {
+        let repo = Self {
             path: dir,
-            identifier,
-            author: config.author,
-            packages,
-            desc,
-        })
+            config,
+            packages: vec![],
+        };
+
+        // TODO: Get packages
+        todo!()
+
+        // Ok(repo)
     }
 
-    fn apply_url_pattern(dir: &Path, pattern: &str) -> Result<String> {
-        let mut pattern = pattern.to_string();
-
-        if pattern.contains("{git_commit}") {
-            let commit = get_git_commit(dir)?;
-            pattern = pattern.replace("{git_commit}", &commit);
+    /// Unique identifier for this repo.
+    /// Will be used as the folder name to store the repo.
+    fn identifier(&self) -> Cow<str> {
+        if let Some(identifier) = self.config.identifier.as_ref() {
+            identifier.into()
+        } else {
+            self.path.file_name().unwrap().to_string_lossy()
         }
-
-        Ok(pattern)
     }
 
-    pub(crate) fn get_package_paths(dir: &Path) -> Result<Vec<PathBuf>> {
-        let mut paths = vec![];
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let is_dir = entry.metadata()?.is_dir();
-            if !is_dir {
-                continue;
-            }
-            let path = entry.path();
-            if !path.join("package.toml").exists() {
-                continue;
-            }
-            paths.push(path);
-        }
-        Ok(paths)
+    fn readme(&self) -> Result<Option<String>> {
+        read_rtf_or_md_file(&self.path.join("README.rtf"))
     }
 
-    pub(crate) fn generate_index<W: std::io::Write>(
-        &self,
-        writer: &mut W,
-    ) -> xml_builder::Result<()> {
+    pub(crate) fn generate_index(&self) -> Result<String> {
         let mut xml = XMLBuilder::new()
             .version(XMLVersion::XML1_1)
             .encoding("UTF-8".into())
             .build();
 
-        let root_element = self.element();
+        let root_element = self.element()?;
         xml.set_root_element(root_element);
 
-        xml.generate(writer)
+        let mut buf: Vec<u8> = Vec::new();
+        xml.generate(&mut buf)?;
+        let result = String::from_utf8(buf)?;
+
+        Ok(result)
     }
 
-    fn element(&self) -> XMLElement {
+    fn element(&self) -> Result<XMLElement> {
         let mut index = XMLElement::new("index");
         index.add_attribute("version", "1");
-        index.add_attribute("name", &self.identifier);
+        index.add_attribute("name", &self.identifier());
 
         // add description
-        if let Some(desc) = &self.desc {
+        if let Some(desc) = &self.readme()? {
             let mut metadata = XMLElement::new("metadata");
             let mut description = XMLElement::new("description");
             description.add_text(cdata(desc)).unwrap();
@@ -271,7 +239,7 @@ impl Repo {
             index.add_child(category).unwrap();
         }
 
-        index
+        Ok(index)
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -279,7 +247,7 @@ impl Repo {
     }
 
     pub(crate) fn author(&self) -> &str {
-        &self.author
+        &self.config.author
     }
 }
 
