@@ -158,7 +158,7 @@ pub(crate) struct RepositoryConfig {
 pub(crate) struct PackageConfig {
     pub(crate) name: Option<String>,
     pub(crate) category: RelativePathBuf,
-    pub(crate) r#type: PackageType,
+    pub(crate) pkg_type: PackageType,
     pub(crate) identifier: Option<String>,
     pub(crate) author: Option<String>,
     pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,

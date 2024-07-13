@@ -340,8 +340,8 @@ impl Package {
         &self.config.category
     }
 
-    fn r#type(&self) -> PackageType {
-        self.config.r#type.clone()
+    fn pkg_type(&self) -> PackageType {
+        self.config.pkg_type.clone()
     }
 
     fn author(&self) -> Option<&str> {
@@ -410,7 +410,7 @@ impl Package {
     fn element(&self, repo: &Repository) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name());
-        reapack.add_attribute("type", (&self.r#type()).into());
+        reapack.add_attribute("type", (&self.pkg_type()).into());
         reapack.add_attribute("name", &self.identifier());
 
         // add description
@@ -559,7 +559,7 @@ impl Version {
 
         // for script packages, check there is at least one entrypoint
         {
-            let pkg_type = pkg.r#type();
+            let pkg_type = pkg.pkg_type();
             if pkg_type == PackageType::Script {
                 let mut package_has_no_entrypoints = true;
                 for src in sources {
@@ -745,7 +745,7 @@ impl Source {
     fn sections(&self, pkg: &Package, ver: &Version) -> Result<&HashSet<ActionListSection>> {
         self.sections.get_or_try_init(|| {
             let entrypoints = ver.entrypoints(pkg)?;
-            let pkg_type = pkg.r#type();
+            let pkg_type = pkg.pkg_type();
             if pkg_type == PackageType::Script {
                 let Some(entrypoints) = entrypoints else {
                     return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
