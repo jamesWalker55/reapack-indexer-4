@@ -88,11 +88,11 @@ impl<'de> Deserialize<'de> for PackageType {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub(crate) enum ActionListSection {
-    MainSection,                // main
-    MIDIEditorSection,          // midi_editor
-    MIDIInlineEditorSection,    // midi_inlineeditor
-    MIDIEventListEditorSection, // midi_eventlisteditor
-    MediaExplorerSection,       // mediaexplorer
+    Main,                // main
+    MIDIEditor,          // midi_editor
+    MIDIInlineEditor,    // midi_inlineeditor
+    MIDIEventListEditor, // midi_eventlisteditor
+    MediaExplorer,       // mediaexplorer
 }
 
 #[derive(Error, Debug)]
@@ -104,11 +104,11 @@ impl FromStr for ActionListSection {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "main" => Ok(Self::MainSection),
-            "midi_editor" => Ok(Self::MIDIEditorSection),
-            "midi_inlineeditor" => Ok(Self::MIDIInlineEditorSection),
-            "midi_eventlisteditor" => Ok(Self::MIDIEventListEditorSection),
-            "mediaexplorer" => Ok(Self::MediaExplorerSection),
+            "main" => Ok(Self::Main),
+            "midi_editor" => Ok(Self::MIDIEditor),
+            "midi_inlineeditor" => Ok(Self::MIDIInlineEditor),
+            "midi_eventlisteditor" => Ok(Self::MIDIEventListEditor),
+            "mediaexplorer" => Ok(Self::MediaExplorer),
             _ => Err(InvalidActionListSection(s.into())),
         }
     }
@@ -117,11 +117,11 @@ impl FromStr for ActionListSection {
 impl From<&ActionListSection> for &str {
     fn from(value: &ActionListSection) -> Self {
         match value {
-            ActionListSection::MainSection => "main",
-            ActionListSection::MIDIEditorSection => "midi_editor",
-            ActionListSection::MIDIInlineEditorSection => "midi_inlineeditor",
-            ActionListSection::MIDIEventListEditorSection => "midi_eventlisteditor",
-            ActionListSection::MediaExplorerSection => "mediaexplorer",
+            ActionListSection::Main => "main",
+            ActionListSection::MIDIEditor => "midi_editor",
+            ActionListSection::MIDIInlineEditor => "midi_inlineeditor",
+            ActionListSection::MIDIEventListEditor => "midi_eventlisteditor",
+            ActionListSection::MediaExplorer => "mediaexplorer",
         }
     }
 }
@@ -147,18 +147,19 @@ impl<'de> Deserialize<'de> for ActionListSection {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct RepositoryConfig {
     pub(crate) identifier: Option<String>,
     pub(crate) author: String,
     pub(crate) url_pattern: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct PackageConfig {
     pub(crate) name: Option<String>,
     pub(crate) category: RelativePathBuf,
-    pub(crate) r#type: PackageType,
+    #[serde(rename = "type")]
+    pub(crate) pkg_type: PackageType,
     pub(crate) identifier: Option<String>,
     pub(crate) author: Option<String>,
     pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,
