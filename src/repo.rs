@@ -2,13 +2,15 @@ use anyhow::Result;
 use chrono::DateTime;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
+use leon::{Template, Values};
 use log::{debug, error, info, trace, warn};
+use once_cell::sync::OnceCell;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     fs::{self},
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
 };
 use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
@@ -112,23 +114,23 @@ fn url_encode_path(path: &RelativePath) -> String {
 }
 
 #[derive(Error, Debug)]
-#[error("failed to launch git, please ensure it is accessible through the command line")]
-struct FailedToLaunchGit;
+enum GitCommitError {
+    #[error("failed to launch git, please ensure it is accessible through the command line")]
+    FailedToLaunchGit,
+    #[error("failed to get commit hash in the given path: {0}")]
+    FailedToGetGitHash(PathBuf),
+}
 
-#[derive(Error, Debug)]
-#[error("failed to get commit hash in the given path: {0}")]
-struct FailedToGetGitHash(PathBuf);
-
-fn get_git_commit(dir: &Path) -> Result<String> {
+fn get_git_commit(dir: &Path) -> Result<String, GitCommitError> {
     use std::process::Command;
     let output = Command::new("git")
         .current_dir(dir)
         .args(["rev-parse", "HEAD"])
         .output()
-        .map_err(|_| FailedToLaunchGit)?;
+        .map_err(|_| GitCommitError::FailedToLaunchGit)?;
 
     if !output.status.success() {
-        return Err(FailedToGetGitHash(dir.into()).into());
+        return Err(GitCommitError::FailedToGetGitHash(dir.into()).into());
     }
 
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -137,17 +139,38 @@ fn get_git_commit(dir: &Path) -> Result<String> {
     Ok(hash)
 }
 
+fn build_entrypoints(
+    patterns_map: &HashMap<ActionListSection, Vec<String>>,
+) -> Result<Entrypoints, globset::Error> {
+    let mut result: Entrypoints = HashMap::new();
+
+    for (section, patterns) in patterns_map.into_iter() {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
+        }
+        let set = builder.build()?;
+        result.insert(*section, set);
+    }
+
+    Ok(result)
+}
+
 #[derive(Debug)]
-pub(crate) struct Repo {
+pub(crate) struct Repo<'a> {
     /// Must be an absolute path
     path: PathBuf,
     config: RepositoryConfig,
+    git_hash: OnceCell<String>,
+    url_pattern: OnceCell<Template<'a>>,
 }
 
-impl Repo {
+impl<'a> Repo<'a> {
     const CONFIG_FILENAME: &'static str = "repository.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
+        debug_assert!(dir == path::absolute(dir).unwrap());
+
         // convert to absolute path to ensure we can get the folder names etc
         let dir = std::path::absolute(dir).unwrap_or(dir.to_path_buf());
 
@@ -157,7 +180,12 @@ impl Repo {
         }
         let config: RepositoryConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        Ok(Self { path: dir, config })
+        Ok(Self {
+            path: dir,
+            config,
+            git_hash: OnceCell::new(),
+            url_pattern: OnceCell::new(),
+        })
     }
 
     /// Unique identifier for this repo.
@@ -182,11 +210,22 @@ impl Repo {
         &self.config.author
     }
 
+    pub(crate) fn url_pattern(&self) -> &Template {
+        self.url_pattern
+            .get_or_init(|| Template::parse(&self.config.url_pattern).unwrap())
+    }
+
+    pub(crate) fn git_hash(&self) -> Result<&str, GitCommitError> {
+        self.git_hash
+            .get_or_try_init(|| get_git_commit(&self.path))
+            .map(|x| x.as_str())
+    }
+
     pub(crate) fn packages(&self) -> Result<Vec<Package>> {
         Package::discover_packages(self.path())
     }
 
-    pub(crate) fn generate_index(&self) -> Result<String> {
+    pub(crate) fn generate_index(&'a self) -> Result<String> {
         let mut xml = XMLBuilder::new()
             .version(XMLVersion::XML1_1)
             .encoding("UTF-8".into())
@@ -202,7 +241,7 @@ impl Repo {
         Ok(result)
     }
 
-    fn element(&self) -> Result<XMLElement> {
+    fn element(&'a self) -> Result<XMLElement> {
         let mut index = XMLElement::new("index");
         index.add_attribute("version", "1");
         index.add_attribute("name", &self.identifier());
@@ -220,9 +259,9 @@ impl Repo {
         let packages = self.packages()?;
         let pkg_map = {
             let mut pkg_map = HashMap::new();
-            for pkg in packages.iter() {
+            for pkg in packages.into_iter() {
                 if !pkg_map.contains_key(pkg.category()) {
-                    pkg_map.insert(pkg.category(), vec![]);
+                    pkg_map.insert(pkg.category().to_relative_path_buf(), vec![]);
                 }
                 let packages = pkg_map.get_mut(pkg.category()).unwrap();
                 packages.push(pkg)
@@ -251,18 +290,22 @@ impl Repo {
 pub(crate) struct Package {
     path: PathBuf,
     config: PackageConfig,
+    entrypoints: OnceCell<Option<Entrypoints>>,
 }
 
 impl Package {
     const CONFIG_FILENAME: &'static str = "package.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
+        debug_assert!(dir == path::absolute(dir).unwrap());
+
         let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
         Ok(Self {
             path: dir.into(),
             config,
+            entrypoints: OnceCell::new(),
         })
     }
 
@@ -302,8 +345,17 @@ impl Package {
         read_rtf_or_md_file(&self.path.join("README.rtf"))
     }
 
-    pub(crate) fn versions(&self) -> Result<Vec<PackageVersion>> {
-        PackageVersion::discover_versions(self.path())
+    fn entrypoints(&self) -> Result<Option<&Entrypoints>, globset::Error> {
+        self.entrypoints
+            .get_or_try_init(|| match &self.config.entrypoints {
+                Some(patterns_map) => build_entrypoints(patterns_map).map(|x| Some(x)),
+                None => Ok(None),
+            })
+            .map(|x| x.as_ref())
+    }
+
+    pub(crate) fn versions(&self) -> Result<Vec<Version>> {
+        Version::discover_versions(self.path())
     }
 
     fn discover_packages(dir: &Path) -> Result<Vec<Package>> {
@@ -348,7 +400,7 @@ impl Package {
         Ok(result)
     }
 
-    fn element(&self, repo: &Repo) -> Result<XMLElement> {
+    fn element<'a, 'b>(&'b self, repo: &'a Repo<'a>) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name());
         reapack.add_attribute("type", (&self.r#type()).into());
@@ -373,21 +425,25 @@ impl Package {
 }
 
 #[derive(Debug)]
-pub(crate) struct PackageVersion {
+pub(crate) struct Version {
     path: PathBuf,
     config: VersionConfig,
+    entrypoints: OnceCell<Option<Entrypoints>>,
 }
 
-impl PackageVersion {
+impl Version {
     const CONFIG_FILENAME: &'static str = "version.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
+        debug_assert!(dir == path::absolute(dir).unwrap());
+
         let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: VersionConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
         Ok(Self {
             path: dir.into(),
             config,
+            entrypoints: OnceCell::new(),
         })
     }
 
@@ -399,15 +455,36 @@ impl PackageVersion {
         self.config.time
     }
 
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(crate) fn changelog(&self) -> Result<Option<String>> {
         read_rtf_or_md_file(&self.path.join("CHANGELOG.rtf"))
+    }
+
+    pub(crate) fn entrypoints<'a>(
+        &'a self,
+        pkg: &'a Package,
+    ) -> Result<Option<&'a Entrypoints>, globset::Error> {
+        let entrypoints = self
+            .entrypoints
+            .get_or_try_init(|| match &self.config.entrypoints {
+                Some(patterns_map) => build_entrypoints(patterns_map).map(|x| Some(x)),
+                None => Ok(None),
+            })?;
+        if entrypoints.is_some() {
+            return Ok(entrypoints.as_ref());
+        }
+
+        pkg.entrypoints()
     }
 
     pub(crate) fn sources(&self) -> Result<Vec<Source>> {
         todo!()
     }
 
-    fn discover_versions(dir: &Path) -> Result<Vec<PackageVersion>> {
+    fn discover_versions(dir: &Path) -> Result<Vec<Version>> {
         let mut result = vec![];
         for entry in fs::read_dir(dir)? {
             let entry = match entry {
@@ -437,7 +514,7 @@ impl PackageVersion {
                 continue;
             }
 
-            let pkg = match PackageVersion::read(&path) {
+            let pkg = match Version::read(&path) {
                 Ok(pkg) => pkg,
                 Err(err) => {
                     warn!("failed to read version {} due to {}", path.display(), err);
@@ -449,7 +526,7 @@ impl PackageVersion {
         Ok(result)
     }
 
-    fn element(&self, repo: &Repo, pkg: &Package) -> Result<XMLElement> {
+    fn element<'a, 'b>(&self, repo: &'b Repo<'a>, pkg: &Package) -> Result<XMLElement> {
         let mut version = XMLElement::new("version");
         version.add_attribute("name", &self.name());
         version.add_attribute("author", pkg.author().unwrap_or(repo.author()));
@@ -463,38 +540,155 @@ impl PackageVersion {
         }
 
         // add sources
-        for source in self.sources()?.iter() {
-            version.add_child(source.element()).unwrap();
+        let sources = self.sources()?;
+        for source in sources.iter() {
+            version
+                .add_child(source.element(&repo, &pkg, &self)?)
+                .unwrap();
         }
 
         Ok(version)
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Source {
-    /// ReaPack's 'file' path, relative to the generated category folder path
-    output_relpath: RelativePathBuf,
-    sections: HashSet<ActionListSection>,
-    url: String,
+struct UrlTemplateValueProvider<'a> {
+    repo: &'a Repo<'a>,
+    pkg: &'a Package,
+    ver: &'a Version,
+    src: &'a Source,
 }
 
-struct SourceParams<'a> {
-    repo_path: &'a Path,
-    version_path: &'a Path,
-    category: &'a RelativePath,
-    url_pattern: &'a str,
-    entrypoints: &'a Option<&'a Entrypoints>,
+impl<'a> Values for UrlTemplateValueProvider<'a> {
+    fn get_value(&self, key: &str) -> Option<Cow<'_, str>> {
+        match key {
+            "git_commit" => match self.repo.git_hash() {
+                Ok(hash) => Some(hash.into()),
+                Err(err) => {
+                    error!("failed to obtain URL variable `git_commit` due to {err}");
+                    None
+                }
+            },
+            "relpath" => {
+                // path of source, relative to root of repository
+                let source_relpath = self.src.path().relative_to(self.repo.path()).unwrap();
+                let encoded_path = url_encode_path(&source_relpath);
+                Some(encoded_path.into())
+            }
+            _ => None,
+        }
+    }
 }
+
+#[derive(Debug)]
+pub(crate) struct Source(PathBuf);
 
 impl Source {
-    fn read(path: &Path, params: SourceParams) -> Result<Self> {
-        // path of source file relative to repository root
-        let relpath_to_repo = path.relative_to(params.repo_path)?;
-        // path of source file relative to version root
-        let relpath_to_ver = path.relative_to(params.version_path)?;
+    fn read(path: &Path) -> Self {
+        debug_assert!(path == path::absolute(path).unwrap());
 
-        let sections = match params.entrypoints {
+        Self(path.into())
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn url(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<String, leon::RenderError> {
+        let template = repo.url_pattern();
+        let values = UrlTemplateValueProvider {
+            repo,
+            pkg,
+            ver,
+            src: &self,
+        };
+
+        template.render(&values)
+    }
+
+    /// The relative path of this source file from its version folder.
+    ///
+    /// E.g. An absolute path like `"C:/index/my-package/0.0.1/foo/index.lua"` will return `"foo/index.lua"`
+    fn relpath_from_version(&self, ver: &Version) -> RelativePathBuf {
+        self.0.relative_to(ver.path()).unwrap()
+    }
+
+    /// The desired output path of this source file, relative to the root of a folder. E.g. `"my-package/0.0.1/foo/index.lua"`
+    ///
+    /// Note: This does NOT consider the subfolders created by the package category. Use [Source::output_relpath_from_category] instead.
+    fn output_relpath(&self, pkg: &Package, ver: &Version) -> RelativePathBuf {
+        let result = RelativePathBuf::from_path(pkg.identifier().as_ref())
+            .expect("package identifier cannot be an absolute path")
+            .join(ver.name().as_ref())
+            .join(self.relpath_from_version(&ver));
+        debug_assert!(result == result.normalize());
+        result
+    }
+
+    /// The 'file' attribute of the Element. A relative path from the Category folder to the source's target location. E.g. `"my-package/0.0.1/foo/index.lua"`
+    fn output_relpath_from_category(&self, pkg: &Package, ver: &Version) -> RelativePathBuf {
+        let mut result = RelativePathBuf::new();
+        // prepend '..' for each segment in category
+        for component in pkg.category().components() {
+            match component {
+                relative_path::Component::CurDir => (),
+                relative_path::Component::ParentDir => panic!(
+                    "package category cannot refer to the parent directory {}",
+                    pkg.category()
+                ),
+                relative_path::Component::Normal(_) => result.push(".."),
+            }
+        }
+        // push the normal expected output path
+        result.push(&self.output_relpath(&pkg, &ver));
+        result
+    }
+
+    fn element<'a, 'b>(
+        &self,
+        repo: &'b Repo<'a>,
+        pkg: &Package,
+        ver: &Version,
+    ) -> Result<XMLElement> {
+        let mut source = XMLElement::new("source");
+        source.add_text(self.url(repo, pkg, ver)?).unwrap();
+        source.add_attribute(
+            "file",
+            self.output_relpath_from_category(&pkg, &ver).as_ref(),
+        );
+
+        // TODO: Implement setting "type" attribute
+        // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
+
+        let entrypoints = ver.entrypoints(&pkg)?;
+
+        // ensure entrypoints are / are not defined
+        let pkg_type = pkg.r#type();
+        if pkg_type == PackageType::Script {
+            let Some(entrypoints) = entrypoints else {
+                return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
+            };
+            if entrypoints
+                .iter()
+                .all(|(section, pattern)| pattern.is_empty())
+            {
+                return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
+            }
+        } else {
+            if let Some(entrypoints) = entrypoints {
+                if entrypoints
+                    .iter()
+                    .any(|(section, pattern)| !pattern.is_empty())
+                {
+                    return Err(EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into());
+                }
+            }
+        }
+
+        // path of source file relative to version root
+        let relpath_to_ver = self.relpath_from_version(&ver);
+
+        // match globs for sections
+        let sections = match entrypoints {
             Some(entrypoints) => entrypoints
                 .iter()
                 .filter_map(|(section, globset)| {
@@ -512,51 +706,12 @@ impl Source {
             None => HashSet::new(),
         };
 
-        let url_pattern = Self::apply_url_pattern(&relpath_to_repo, params.url_pattern)?;
-        let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
-        if let Some(cap) = variable_regex.captures(&url_pattern) {
-            let mat = cap.get(0).unwrap();
-            return Err(UnknownURLPatternVariable(mat.as_str().to_string()).into());
-        }
-
-        let output_path = {
-            let category_path = params.category;
-            category_path.relative(&relpath_to_repo)
-        };
-
-        Ok(Self {
-            output_relpath: output_path,
-            // TODO: Determine sections
-            sections,
-            url: url_pattern,
-        })
-    }
-
-    fn apply_url_pattern(path: &RelativePath, pattern: &str) -> Result<String> {
-        let mut pattern = pattern.to_string();
-
-        if pattern.contains("{relpath}") {
-            let path = url_encode_path(path);
-            pattern = pattern.replace("{relpath}", &path);
-        }
-
-        Ok(pattern)
-    }
-
-    fn element(&self) -> XMLElement {
-        let mut source = XMLElement::new("source");
-        source.add_text(self.url.clone()).unwrap();
-        source.add_attribute("file", self.output_relpath.as_ref());
-
-        // TODO: Implement setting "type" attribute
-        // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
-
-        if !self.sections.is_empty() {
-            let sections = self.sections.iter().map(Into::<&str>::into).join(" ");
+        if !sections.is_empty() {
+            let sections = sections.iter().map(Into::<&str>::into).join(" ");
             source.add_attribute("main", &sections);
         }
 
-        source
+        Ok(source)
     }
 }
 
