@@ -3,6 +3,11 @@ mod repo;
 mod templates;
 mod version;
 
+use anyhow::Result;
+use chrono::Utc;
+use clap::{Parser, Subcommand};
+use log::{debug, error, info, trace, warn};
+use repo::{Package, Repo};
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -10,11 +15,6 @@ use std::{
     io::BufWriter,
     path::{self, Path, PathBuf},
 };
-
-use anyhow::Result;
-use chrono::Utc;
-use clap::{Parser, Subcommand};
-use repo::{Package, Repo};
 use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
 use thiserror::Error;
 use version::{find_latest_version, increment_version};

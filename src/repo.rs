@@ -26,8 +26,8 @@ type Entrypoints = HashMap<ActionListSection, GlobSet>;
 pub(crate) struct NotARepository(PathBuf);
 
 #[derive(Error, Debug)]
-#[error("unknown variable in URL pattern: `{0}`")]
-pub(crate) struct UnknownURLPatternVariable(String);
+#[error("no sources found in package version: `{0}`")]
+pub(crate) struct NoSourcesFound(PathBuf);
 
 #[derive(Error, Debug)]
 #[error("entrypoints can only be defined in packages with type = \"script\": `{0}`")]
@@ -157,15 +157,14 @@ fn build_entrypoints(
 }
 
 #[derive(Debug)]
-pub(crate) struct Repo<'a> {
+pub(crate) struct Repo {
     /// Must be an absolute path
     path: PathBuf,
     config: RepositoryConfig,
     git_hash: OnceCell<String>,
-    url_pattern: OnceCell<Template<'a>>,
 }
 
-impl<'a> Repo<'a> {
+impl Repo {
     const CONFIG_FILENAME: &'static str = "repository.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
@@ -184,7 +183,6 @@ impl<'a> Repo<'a> {
             path: dir,
             config,
             git_hash: OnceCell::new(),
-            url_pattern: OnceCell::new(),
         })
     }
 
@@ -210,9 +208,8 @@ impl<'a> Repo<'a> {
         &self.config.author
     }
 
-    pub(crate) fn url_pattern(&self) -> &Template {
-        self.url_pattern
-            .get_or_init(|| Template::parse(&self.config.url_pattern).unwrap())
+    pub(crate) fn url_pattern(&self) -> &str {
+        &self.config.url_pattern
     }
 
     pub(crate) fn git_hash(&self) -> Result<&str, GitCommitError> {
@@ -225,7 +222,7 @@ impl<'a> Repo<'a> {
         Package::discover_packages(self.path())
     }
 
-    pub(crate) fn generate_index(&'a self) -> Result<String> {
+    pub(crate) fn generate_index(&self) -> Result<String> {
         let mut xml = XMLBuilder::new()
             .version(XMLVersion::XML1_1)
             .encoding("UTF-8".into())
@@ -241,7 +238,7 @@ impl<'a> Repo<'a> {
         Ok(result)
     }
 
-    fn element(&'a self) -> Result<XMLElement> {
+    fn element(&self) -> Result<XMLElement> {
         let mut index = XMLElement::new("index");
         index.add_attribute("version", "1");
         index.add_attribute("name", &self.identifier());
@@ -400,7 +397,7 @@ impl Package {
         Ok(result)
     }
 
-    fn element<'a, 'b>(&'b self, repo: &'a Repo<'a>) -> Result<XMLElement> {
+    fn element(&self, repo: &Repo) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name());
         reapack.add_attribute("type", (&self.r#type()).into());
@@ -480,8 +477,8 @@ impl Version {
         pkg.entrypoints()
     }
 
-    pub(crate) fn sources(&self) -> Result<Vec<Source>> {
-        todo!()
+    pub(crate) fn sources(&self) -> Result<Vec<Source>, NoSourcesFound> {
+        Source::discover_sources(&self.path)
     }
 
     fn discover_versions(dir: &Path) -> Result<Vec<Version>> {
@@ -526,7 +523,7 @@ impl Version {
         Ok(result)
     }
 
-    fn element<'a, 'b>(&self, repo: &'b Repo<'a>, pkg: &Package) -> Result<XMLElement> {
+    fn element(&self, repo: &Repo, pkg: &Package) -> Result<XMLElement> {
         let mut version = XMLElement::new("version");
         version.add_attribute("name", &self.name());
         version.add_attribute("author", pkg.author().unwrap_or(repo.author()));
@@ -547,18 +544,36 @@ impl Version {
                 .unwrap();
         }
 
+        // for script packages, check there is at least one entrypoint
+        {
+            let pkg_type = pkg.r#type();
+            if pkg_type == PackageType::Script {
+                let mut package_has_no_entrypoints = true;
+                for src in sources {
+                    let sections = src.sections(&pkg, &self)?;
+                    if !sections.is_empty() {
+                        package_has_no_entrypoints = false;
+                        break;
+                    }
+                }
+                if package_has_no_entrypoints {
+                    return Err(NoEntrypointsFoundForScriptPackage(pkg.path().into()).into());
+                }
+            }
+        }
+
         Ok(version)
     }
 }
 
 struct UrlTemplateValueProvider<'a> {
-    repo: &'a Repo<'a>,
+    repo: &'a Repo,
     pkg: &'a Package,
     ver: &'a Version,
     src: &'a Source,
 }
 
-impl<'a> Values for UrlTemplateValueProvider<'a> {
+impl Values for UrlTemplateValueProvider<'_> {
     fn get_value(&self, key: &str) -> Option<Cow<'_, str>> {
         match key {
             "git_commit" => match self.repo.git_hash() {
@@ -580,21 +595,29 @@ impl<'a> Values for UrlTemplateValueProvider<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Source(PathBuf);
+pub(crate) struct Source {
+    path: PathBuf,
+    sections: OnceCell<HashSet<ActionListSection>>,
+}
 
 impl Source {
     fn read(path: &Path) -> Self {
         debug_assert!(path == path::absolute(path).unwrap());
 
-        Self(path.into())
+        Self {
+            path: path.into(),
+            sections: OnceCell::new(),
+        }
     }
 
     pub(crate) fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
 
-    fn url(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<String, leon::RenderError> {
-        let template = repo.url_pattern();
+    fn url(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<String> {
+        let url_pattern = repo.url_pattern();
+        // TODO: Find a way to not parse a new template from scratch for every source
+        let template = Template::parse(url_pattern)?;
         let values = UrlTemplateValueProvider {
             repo,
             pkg,
@@ -602,14 +625,14 @@ impl Source {
             src: &self,
         };
 
-        template.render(&values)
+        Ok(template.render(&values)?)
     }
 
     /// The relative path of this source file from its version folder.
     ///
     /// E.g. An absolute path like `"C:/index/my-package/0.0.1/foo/index.lua"` will return `"foo/index.lua"`
     fn relpath_from_version(&self, ver: &Version) -> RelativePathBuf {
-        self.0.relative_to(ver.path()).unwrap()
+        self.path.relative_to(ver.path()).unwrap()
     }
 
     /// The desired output path of this source file, relative to the root of a folder. E.g. `"my-package/0.0.1/foo/index.lua"`
@@ -622,6 +645,46 @@ impl Source {
             .join(self.relpath_from_version(&ver));
         debug_assert!(result == result.normalize());
         result
+    }
+
+    fn discover_sources(dir: &Path) -> Result<Vec<Source>, NoSourcesFound> {
+        let sources: Vec<_> = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+
+                    // skip directories
+                    match entry.metadata() {
+                        Err(e) => {
+                            warn!(
+                                "failed to get metadata for source {} due to {}",
+                                path.display(),
+                                e
+                            );
+                            return None;
+                        }
+                        Ok(metadata) => {
+                            if !metadata.is_file() {
+                                return None;
+                            }
+                        }
+                    }
+
+                    Some(Source::read(path))
+                }
+                Err(e) => {
+                    warn!("failed to read source {}", e);
+                    None
+                }
+            })
+            .collect();
+
+        if sources.is_empty() {
+            Err(NoSourcesFound(dir.into()))
+        } else {
+            Ok(sources)
+        }
     }
 
     /// The 'file' attribute of the Element. A relative path from the Category folder to the source's target location. E.g. `"my-package/0.0.1/foo/index.lua"`
@@ -643,12 +706,7 @@ impl Source {
         result
     }
 
-    fn element<'a, 'b>(
-        &self,
-        repo: &'b Repo<'a>,
-        pkg: &Package,
-        ver: &Version,
-    ) -> Result<XMLElement> {
+    fn element(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<XMLElement> {
         let mut source = XMLElement::new("source");
         source.add_text(self.url(repo, pkg, ver)?).unwrap();
         source.add_attribute(
@@ -659,52 +717,7 @@ impl Source {
         // TODO: Implement setting "type" attribute
         // https://github.com/cfillion/reapack/wiki/Index-Format#source-element
 
-        let entrypoints = ver.entrypoints(&pkg)?;
-
-        // ensure entrypoints are / are not defined
-        let pkg_type = pkg.r#type();
-        if pkg_type == PackageType::Script {
-            let Some(entrypoints) = entrypoints else {
-                return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
-            };
-            if entrypoints
-                .iter()
-                .all(|(section, pattern)| pattern.is_empty())
-            {
-                return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
-            }
-        } else {
-            if let Some(entrypoints) = entrypoints {
-                if entrypoints
-                    .iter()
-                    .any(|(section, pattern)| !pattern.is_empty())
-                {
-                    return Err(EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into());
-                }
-            }
-        }
-
-        // path of source file relative to version root
-        let relpath_to_ver = self.relpath_from_version(&ver);
-
-        // match globs for sections
-        let sections = match entrypoints {
-            Some(entrypoints) => entrypoints
-                .iter()
-                .filter_map(|(section, globset)| {
-                    // Use '.to_string()' instead of '.to_path(".")'!!
-                    // Because '.to_path(".")' adds a './' to the beginning of the path, messing up the glob matcher,
-                    // while '.to_string()' does not add a './' and keeps the path as-is.
-                    let matches = globset.matches(relpath_to_ver.to_string());
-                    if matches.is_empty() {
-                        None
-                    } else {
-                        Some(*section)
-                    }
-                })
-                .collect(),
-            None => HashSet::new(),
-        };
+        let sections = self.sections(pkg, ver)?;
 
         if !sections.is_empty() {
             let sections = sections.iter().map(Into::<&str>::into).join(" ");
@@ -712,6 +725,48 @@ impl Source {
         }
 
         Ok(source)
+    }
+
+    fn sections(&self, pkg: &Package, ver: &Version) -> Result<&HashSet<ActionListSection>> {
+        self.sections.get_or_try_init(|| {
+            let entrypoints = ver.entrypoints(&pkg)?;
+            let pkg_type = pkg.r#type();
+            if pkg_type == PackageType::Script {
+                let Some(entrypoints) = entrypoints else {
+                    return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
+                };
+                if entrypoints.iter().all(|(_, pattern)| pattern.is_empty()) {
+                    return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
+                }
+            } else {
+                if let Some(entrypoints) = entrypoints {
+                    if entrypoints.iter().any(|(_, pattern)| !pattern.is_empty()) {
+                        return Err(
+                            EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into()
+                        );
+                    }
+                }
+            }
+            let relpath_to_ver = self.relpath_from_version(&ver);
+            let sections = match entrypoints {
+                Some(entrypoints) => entrypoints
+                    .iter()
+                    .filter_map(|(section, globset)| {
+                        // Use '.to_string()' instead of '.to_path(".")'!!
+                        // Because '.to_path(".")' adds a './' to the beginning of the path, messing up the glob matcher,
+                        // while '.to_string()' does not add a './' and keeps the path as-is.
+                        let matches = globset.matches(relpath_to_ver.to_string());
+                        if matches.is_empty() {
+                            None
+                        } else {
+                            Some(*section)
+                        }
+                    })
+                    .collect(),
+                None => HashSet::new(),
+            };
+            Ok(sections)
+        })
     }
 }
 
