@@ -552,9 +552,9 @@ struct SourceParams<'a> {
 impl Source {
     fn read(path: &Path, params: SourceParams) -> Result<Self> {
         // path of source file relative to repository root
-        let relpath = path.relative_to(params.repo_path)?;
+        let relpath_to_repo = path.relative_to(params.repo_path)?;
         // path of source file relative to version root
-        let relpath_to_version = path.relative_to(params.version_path)?;
+        let relpath_to_ver = path.relative_to(params.version_path)?;
 
         let sections = match params.entrypoints {
             Some(entrypoints) => entrypoints
@@ -563,7 +563,7 @@ impl Source {
                     // Use '.to_string()' instead of '.to_path(".")'!!
                     // Because '.to_path(".")' adds a './' to the beginning of the path, messing up the glob matcher,
                     // while '.to_string()' does not add a './' and keeps the path as-is.
-                    let matches = globset.matches(relpath_to_version.to_string());
+                    let matches = globset.matches(relpath_to_ver.to_string());
                     if matches.is_empty() {
                         None
                     } else {
@@ -574,7 +574,7 @@ impl Source {
             None => HashSet::new(),
         };
 
-        let url_pattern = Self::apply_url_pattern(&relpath, params.url_pattern)?;
+        let url_pattern = Self::apply_url_pattern(&relpath_to_repo, params.url_pattern)?;
         let variable_regex = regex::Regex::new(r"\{.*?\}").unwrap();
         if let Some(cap) = variable_regex.captures(&url_pattern) {
             let mat = cap.get(0).unwrap();
@@ -583,7 +583,7 @@ impl Source {
 
         let output_path = {
             let category_path = params.category;
-            category_path.relative(&relpath)
+            category_path.relative(&relpath_to_repo)
         };
 
         Ok(Self {
