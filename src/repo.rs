@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::DateTime;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
+use log::{debug, error, info, trace, warn};
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
     borrow::Cow,
@@ -141,7 +142,6 @@ pub(crate) struct Repo {
     /// Must be an absolute path
     path: PathBuf,
     config: RepositoryConfig,
-    packages: Vec<Package>,
 }
 
 impl Repo {
@@ -157,21 +157,12 @@ impl Repo {
         }
         let config: RepositoryConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
 
-        let repo = Self {
-            path: dir,
-            config,
-            packages: vec![],
-        };
-
-        // TODO: Get packages
-        todo!()
-
-        // Ok(repo)
+        Ok(Self { path: dir, config })
     }
 
     /// Unique identifier for this repo.
     /// Will be used as the folder name to store the repo.
-    fn identifier(&self) -> Cow<str> {
+    pub(crate) fn identifier(&self) -> Cow<str> {
         if let Some(identifier) = self.config.identifier.as_ref() {
             identifier.into()
         } else {
@@ -179,8 +170,20 @@ impl Repo {
         }
     }
 
-    fn readme(&self) -> Result<Option<String>> {
+    pub(crate) fn readme(&self) -> Result<Option<String>> {
         read_rtf_or_md_file(&self.path.join("README.rtf"))
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+
+    pub(crate) fn author(&self) -> &str {
+        &self.config.author
+    }
+
+    pub(crate) fn packages(&self) -> Result<Vec<Package>> {
+        Package::discover_packages(&self)
     }
 
     pub(crate) fn generate_index(&self) -> Result<String> {
@@ -214,13 +217,14 @@ impl Repo {
         }
 
         // group packages into categories
+        let packages = self.packages()?;
         let pkg_map = {
             let mut pkg_map = HashMap::new();
-            for pkg in self.packages.iter() {
-                if !pkg_map.contains_key(&pkg.category) {
-                    pkg_map.insert(&pkg.category, vec![]);
+            for pkg in packages.iter() {
+                if !pkg_map.contains_key(pkg.category()) {
+                    pkg_map.insert(pkg.category(), vec![]);
                 }
-                let packages = pkg_map.get_mut(&pkg.category).unwrap();
+                let packages = pkg_map.get_mut(pkg.category()).unwrap();
                 packages.push(pkg)
             }
             pkg_map
@@ -232,7 +236,7 @@ impl Repo {
             category.add_attribute("name", category_name.as_ref());
 
             for pkg in packages {
-                let reapack = pkg.element();
+                let reapack = pkg.element()?;
                 category.add_child(reapack).unwrap();
             }
 
@@ -241,132 +245,113 @@ impl Repo {
 
         Ok(index)
     }
-
-    pub(crate) fn path(&self) -> &Path {
-        self.path.as_ref()
-    }
-
-    pub(crate) fn author(&self) -> &str {
-        &self.config.author
-    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Package {
     path: PathBuf,
-    /// Unique identifier for this package.
-    /// Will be used as the folder name to store the package.
-    identifier: String,
-    /// Descriptive display name for this package, as shown in Reapack.
-    name: String,
-    /// Category for classification, not target folder.
-    /// Must be a Path so I can reverse-engineer how many '../' to add to the source path.
-    category: RelativePathBuf,
-    r#type: PackageType,
-    desc: Option<String>,
-    versions: Vec<PackageVersion>,
-}
-
-pub(crate) struct PackageParams<'a> {
-    repo_path: &'a Path,
-    author: &'a str,
-    url_pattern: &'a str,
+    config: PackageConfig,
 }
 
 impl Package {
-    pub(crate) fn read(dir: &Path, params: PackageParams) -> Result<Self> {
-        let config_path = dir.join("package.toml");
+    const CONFIG_FILENAME: &'static str = "package.toml";
+
+    pub(crate) fn read(dir: &Path) -> Result<Self> {
+        let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
-
-        let name = config
-            .name
-            // default to directory name
-            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
-        let identifier = config
-            .identifier
-            .unwrap_or(dir.file_name().unwrap().to_string_lossy().into_owned());
-        let desc = read_rtf_or_md_file(&dir.join("README.rtf"))?;
-
-        let author = config
-            .author
-            // default to params (required)
-            .unwrap_or(params.author.into());
-
-        if config.entrypoints.is_some() && config.r#type != PackageType::Script {
-            return Err(EntrypointsOnlyAllowedInScriptPackages(config_path).into());
-        }
-        if config.entrypoints.is_none() && config.r#type == PackageType::Script {
-            return Err(NoEntrypointsDefinedForScriptPackage(config_path).into());
-        }
-        let entrypoints: Option<Entrypoints> = config
-            .entrypoints
-            .map(|entrypoints| {
-                let mut result: Entrypoints = HashMap::new();
-                for (section, patterns) in entrypoints.into_iter() {
-                    let mut builder = GlobSetBuilder::new();
-                    for pattern in patterns {
-                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
-                    }
-                    let set = builder.build()?;
-                    result.insert(section, set);
-                }
-                Ok::<_, globset::Error>(result)
-            })
-            .transpose()?;
-
-        let versions: Result<Vec<PackageVersion>> = Self::get_version_paths(dir)?
-            .iter()
-            .map(|p| {
-                PackageVersion::read(
-                    p,
-                    PackageVersionParams {
-                        repo_path: params.repo_path,
-                        author: &author,
-                        url_pattern: params.url_pattern,
-                        category: &config.category,
-                        entrypoints: &entrypoints.as_ref(),
-                    },
-                )
-            })
-            .collect();
-        let versions = versions?;
 
         Ok(Self {
             path: dir.into(),
-            identifier: identifier,
-            category: config.category.clone(),
-            r#type: config.r#type.clone(),
-            name,
-            desc,
-            versions,
+            config,
         })
     }
 
-    pub(crate) fn get_version_paths(dir: &Path) -> Result<Vec<PathBuf>> {
-        let mut paths = vec![];
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let is_dir = entry.metadata()?.is_dir();
+    fn identifier(&self) -> Cow<str> {
+        if let Some(identifier) = &self.config.identifier {
+            identifier.into()
+        } else {
+            self.path.file_name().unwrap().to_string_lossy()
+        }
+    }
+
+    fn name(&self) -> Cow<str> {
+        if let Some(name) = &self.config.name {
+            name.into()
+        } else {
+            self.identifier()
+        }
+    }
+
+    fn category(&self) -> &RelativePath {
+        &self.config.category
+    }
+
+    fn r#type(&self) -> PackageType {
+        self.config.r#type.clone()
+    }
+
+    fn author(&self) -> Option<&str> {
+        self.config.author.as_ref().map(|x| x.as_str())
+    }
+
+    fn readme(&self) -> Result<Option<String>> {
+        read_rtf_or_md_file(&self.path.join("README.rtf"))
+    }
+
+    pub(crate) fn versions(&self) -> Result<Vec<PackageVersion>> {
+        todo!()
+    }
+
+    fn discover_packages(repo: &Repo) -> Result<Vec<Package>> {
+        let mut result = vec![];
+        for entry in fs::read_dir(repo.path())? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warn!("failed to read entry {}", err);
+                    continue;
+                }
+            };
+            let path = entry.path();
+
+            let is_dir = match path.metadata() {
+                Ok(metadata) => metadata.is_dir(),
+                Err(err) => {
+                    warn!(
+                        "failed to get metadata for entry {} due to {}",
+                        path.display(),
+                        err
+                    );
+                    continue;
+                }
+            };
             if !is_dir {
                 continue;
             }
-            let path = entry.path();
-            if !path.join("version.toml").exists() {
+            if !path.join(Self::CONFIG_FILENAME).exists() {
                 continue;
             }
-            paths.push(path);
+
+            let pkg = match Package::read(&path) {
+                Ok(pkg) => pkg,
+                Err(err) => {
+                    warn!("failed to read package {} due to {}", path.display(), err);
+                    continue;
+                }
+            };
+            result.push(pkg);
         }
-        Ok(paths)
+        Ok(result)
     }
 
-    fn element(&self) -> XMLElement {
+    fn element(&self) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
-        reapack.add_attribute("desc", &self.name);
-        reapack.add_attribute("type", (&self.r#type).into());
-        reapack.add_attribute("name", &self.identifier);
+        reapack.add_attribute("desc", &self.name());
+        reapack.add_attribute("type", (&self.r#type()).into());
+        reapack.add_attribute("name", &self.identifier());
 
         // add description
-        if let Some(desc) = &self.desc {
+        if let Some(desc) = &self.readme()? {
             let mut metadata = XMLElement::new("metadata");
             let mut description = XMLElement::new("description");
             description.add_text(cdata(desc)).unwrap();
@@ -375,11 +360,11 @@ impl Package {
         }
 
         // add versions
-        for version in self.versions.iter() {
+        for version in self.versions()?.iter() {
             reapack.add_child(version.element()).unwrap();
         }
 
-        reapack
+        Ok(reapack)
     }
 }
 
@@ -477,6 +462,10 @@ impl PackageVersion {
             sources,
             author: params.author.into(),
         })
+    }
+
+    pub(crate) fn name(&self) -> Cow<str> {
+        todo!()
     }
 
     fn element(&self) -> XMLElement {

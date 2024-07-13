@@ -14,7 +14,7 @@ use std::{
 use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use repo::Package;
+use repo::{Package, Repo};
 use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
 use thiserror::Error;
 use version::{find_latest_version, increment_version};
@@ -122,6 +122,9 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result
 }
 
 fn main() -> Result<()> {
+    // initialise logging
+    colog::init();
+
     let args = Args::parse();
 
     match &args.command {
@@ -140,15 +143,12 @@ fn main() -> Result<()> {
         }
         Commands::Publish {
             identifier,
-            version,
+            version: version_name,
             path,
             repo,
             new,
         } => {
-            // check that repository exists
-            if !repo.join("repository.toml").exists() {
-                return Err(RepositoryDoesNotExist(repo.into()).into());
-            }
+            let repo = Repo::read(repo)?;
 
             // check that the source path exists
             if !path.exists() {
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
                 if &sanitized_identifier != identifier {
                     return Err(InvalidPackageName(identifier.clone()).into());
                 }
-                if let Some(version) = version {
+                if let Some(version) = version_name {
                     let sanitized_version =
                         sanitize_filename::sanitize_with_options(version, opt.clone());
                     if &sanitized_version != version {
@@ -176,7 +176,7 @@ fn main() -> Result<()> {
                 }
             }
 
-            let pkg_path = repo.join(identifier);
+            let pkg_path = repo.path().join(identifier);
             let pkg_config_path = pkg_path.join("package.toml");
             if *new {
                 if pkg_config_path.exists() {
@@ -208,23 +208,23 @@ fn main() -> Result<()> {
                 }
             }
 
-            let versions: HashSet<_> = Package::get_version_paths(&pkg_path)?
-                .into_iter()
-                .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-                .collect();
-            let new_version: String = match version {
-                Some(version) => {
-                    if versions.contains(version) {
-                        return Err(VersionAlreadyExists(version.into()).into());
+            let pkg = Package::read(&pkg_path)?;
+            let versions = pkg.versions()?;
+            let version_names: HashSet<_> = versions.iter().map(|x| x.name()).collect();
+
+            let version_name: String = match version_name {
+                Some(version_name) => {
+                    if version_names.contains(version_name.as_str()) {
+                        return Err(VersionAlreadyExists(version_name.into()).into());
                     }
-                    version.into()
+                    version_name.into()
                 }
-                None => match find_latest_version(versions.iter().map(|x| x.as_ref())) {
+                None => match find_latest_version(version_names.iter().map(|x| x.as_ref())) {
                     Some(latest_version) => increment_version(latest_version)?,
                     None => "0.0.1".into(),
                 },
             };
-            let ver_path = pkg_path.join(&new_version);
+            let ver_path = pkg_path.join(&version_name);
             let ver_config_path = ver_path.join("version.toml");
 
             // create package dir
@@ -254,7 +254,7 @@ fn main() -> Result<()> {
                 fs::write(&ver_config_path, config_text)?;
             }
 
-            println!("Created version {}", &new_version);
+            println!("Created version {}", &version_name);
             println!(
                 "Please edit the version configuration file: {}",
                 ver_config_path.display()
