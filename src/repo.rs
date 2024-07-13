@@ -183,7 +183,7 @@ impl Repo {
     }
 
     pub(crate) fn packages(&self) -> Result<Vec<Package>> {
-        Package::discover_packages(&self)
+        Package::discover_packages(self.path())
     }
 
     pub(crate) fn generate_index(&self) -> Result<String> {
@@ -236,7 +236,7 @@ impl Repo {
             category.add_attribute("name", category_name.as_ref());
 
             for pkg in packages {
-                let reapack = pkg.element()?;
+                let reapack = pkg.element(&self)?;
                 category.add_child(reapack).unwrap();
             }
 
@@ -282,6 +282,10 @@ impl Package {
         }
     }
 
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
     fn category(&self) -> &RelativePath {
         &self.config.category
     }
@@ -299,12 +303,12 @@ impl Package {
     }
 
     pub(crate) fn versions(&self) -> Result<Vec<PackageVersion>> {
-        todo!()
+        PackageVersion::discover_versions(self.path())
     }
 
-    fn discover_packages(repo: &Repo) -> Result<Vec<Package>> {
+    fn discover_packages(dir: &Path) -> Result<Vec<Package>> {
         let mut result = vec![];
-        for entry in fs::read_dir(repo.path())? {
+        for entry in fs::read_dir(dir)? {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(err) => {
@@ -344,7 +348,7 @@ impl Package {
         Ok(result)
     }
 
-    fn element(&self) -> Result<XMLElement> {
+    fn element(&self, repo: &Repo) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name());
         reapack.add_attribute("type", (&self.r#type()).into());
@@ -361,7 +365,7 @@ impl Package {
 
         // add versions
         for version in self.versions()?.iter() {
-            reapack.add_child(version.element()).unwrap();
+            reapack.add_child(version.element(&repo, &self)?).unwrap();
         }
 
         Ok(reapack)
@@ -371,122 +375,99 @@ impl Package {
 #[derive(Debug)]
 pub(crate) struct PackageVersion {
     path: PathBuf,
-    /// The version name, e.g. '0.0.1'
-    name: String,
-    author: String,
-    time: DateTime<chrono::Utc>,
-    changelog: Option<String>,
-    sources: Vec<Source>,
-}
-
-pub(crate) struct PackageVersionParams<'a> {
-    author: &'a str,
-    repo_path: &'a Path,
-    url_pattern: &'a str,
-    category: &'a RelativePath,
-    entrypoints: &'a Option<&'a Entrypoints>,
+    config: VersionConfig,
 }
 
 impl PackageVersion {
-    pub(crate) fn read(dir: &Path, params: PackageVersionParams) -> Result<Self> {
-        let config_path = dir.join("version.toml");
+    const CONFIG_FILENAME: &'static str = "version.toml";
+
+    pub(crate) fn read(dir: &Path) -> Result<Self> {
+        let config_path = dir.join(Self::CONFIG_FILENAME);
         let config: VersionConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
-
-        let name = dir.file_name().unwrap().to_string_lossy();
-
-        let changelog = read_rtf_or_md_file(&dir.join("CHANGELOG.rtf"))?;
-
-        let entrypoints: Option<Entrypoints> = config
-            .entrypoints
-            .map(|entrypoints| {
-                let mut result: Entrypoints = HashMap::new();
-                for (section, patterns) in entrypoints.into_iter() {
-                    let mut builder = GlobSetBuilder::new();
-                    for pattern in patterns {
-                        builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
-                    }
-                    let set = builder.build()?;
-                    result.insert(section, set);
-                }
-                Ok::<_, globset::Error>(result)
-            })
-            .transpose()?;
-        let entrypoints = &entrypoints.as_ref().or(*params.entrypoints);
-
-        let sources: Result<Vec<_>> = walkdir::WalkDir::new(dir)
-            .into_iter()
-            .filter_map(|entry| match entry {
-                Ok(entry) => {
-                    // skip directories
-                    match entry.metadata() {
-                        Err(e) => return Some(Err(e.into())),
-                        Ok(metadata) => {
-                            if !metadata.is_file() {
-                                return None;
-                            }
-                        }
-                    }
-
-                    let path = entry.into_path();
-                    Some(Source::read(
-                        &path,
-                        SourceParams {
-                            repo_path: params.repo_path,
-                            version_path: dir,
-                            url_pattern: params.url_pattern,
-                            category: params.category,
-                            entrypoints,
-                        },
-                    ))
-                }
-                Err(e) => {
-                    println!("Error when scanning sources: {e}");
-                    None
-                }
-            })
-            .collect();
-        let sources = sources?;
-
-        if entrypoints.is_some() {
-            let has_entrypoint_files = sources.iter().any(|x| !x.sections.is_empty());
-            if !has_entrypoint_files {
-                return Err(NoEntrypointsFoundForScriptPackage(config_path).into());
-            }
-        }
 
         Ok(Self {
             path: dir.into(),
-            name: name.into(),
-            time: config.time,
-            changelog,
-            sources,
-            author: params.author.into(),
+            config,
         })
     }
 
     pub(crate) fn name(&self) -> Cow<str> {
+        self.path.file_name().unwrap().to_string_lossy()
+    }
+
+    pub(crate) fn time(&self) -> DateTime<chrono::Utc> {
+        self.config.time
+    }
+
+    pub(crate) fn changelog(&self) -> Result<Option<String>> {
+        read_rtf_or_md_file(&self.path.join("CHANGELOG.rtf"))
+    }
+
+    pub(crate) fn sources(&self) -> Result<Vec<Source>> {
         todo!()
     }
 
-    fn element(&self) -> XMLElement {
+    fn discover_versions(dir: &Path) -> Result<Vec<PackageVersion>> {
+        let mut result = vec![];
+        for entry in fs::read_dir(dir)? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warn!("failed to read entry {}", err);
+                    continue;
+                }
+            };
+            let path = entry.path();
+
+            let is_dir = match path.metadata() {
+                Ok(metadata) => metadata.is_dir(),
+                Err(err) => {
+                    warn!(
+                        "failed to get metadata for entry {} due to {}",
+                        path.display(),
+                        err
+                    );
+                    continue;
+                }
+            };
+            if !is_dir {
+                continue;
+            }
+            if !path.join(Self::CONFIG_FILENAME).exists() {
+                continue;
+            }
+
+            let pkg = match PackageVersion::read(&path) {
+                Ok(pkg) => pkg,
+                Err(err) => {
+                    warn!("failed to read version {} due to {}", path.display(), err);
+                    continue;
+                }
+            };
+            result.push(pkg);
+        }
+        Ok(result)
+    }
+
+    fn element(&self, repo: &Repo, pkg: &Package) -> Result<XMLElement> {
         let mut version = XMLElement::new("version");
-        version.add_attribute("name", &self.name);
-        version.add_attribute("author", &self.author);
-        version.add_attribute("time", &self.time.to_rfc3339());
+        version.add_attribute("name", &self.name());
+        version.add_attribute("author", pkg.author().unwrap_or(repo.author()));
+        version.add_attribute("time", &self.time().to_rfc3339());
 
         // add changelog
-        if let Some(text) = &self.changelog {
+        if let Some(text) = &self.changelog()? {
             let mut changelog = XMLElement::new("changelog");
             changelog.add_text(cdata(text)).unwrap();
             version.add_child(changelog).unwrap();
         }
 
         // add sources
-        for source in self.sources.iter() {
+        for source in self.sources()?.iter() {
             version.add_child(source.element()).unwrap();
         }
 
-        version
+        Ok(version)
     }
 }
 
