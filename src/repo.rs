@@ -3,7 +3,7 @@ use chrono::DateTime;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use leon::{Template, Values};
-use log::{debug, error, info, trace, warn};
+use log::{error, warn};
 use once_cell::sync::OnceCell;
 use relative_path::{PathExt, RelativePath, RelativePathBuf};
 use std::{
@@ -130,7 +130,7 @@ fn get_git_commit(dir: &Path) -> Result<String, GitCommitError> {
         .map_err(|_| GitCommitError::FailedToLaunchGit)?;
 
     if !output.status.success() {
-        return Err(GitCommitError::FailedToGetGitHash(dir.into()).into());
+        return Err(GitCommitError::FailedToGetGitHash(dir.into()));
     }
 
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -144,10 +144,10 @@ fn build_entrypoints(
 ) -> Result<Entrypoints, globset::Error> {
     let mut result: Entrypoints = HashMap::new();
 
-    for (section, patterns) in patterns_map.into_iter() {
+    for (section, patterns) in patterns_map.iter() {
         let mut builder = GlobSetBuilder::new();
         for pattern in patterns {
-            builder.add(GlobBuilder::new(&pattern).literal_separator(true).build()?);
+            builder.add(GlobBuilder::new(pattern).literal_separator(true).build()?);
         }
         let set = builder.build()?;
         result.insert(*section, set);
@@ -272,7 +272,7 @@ impl Repo {
             category.add_attribute("name", category_name.as_ref());
 
             for pkg in packages {
-                let reapack = pkg.element(&self)?;
+                let reapack = pkg.element(self)?;
                 category.add_child(reapack).unwrap();
             }
 
@@ -297,7 +297,7 @@ impl Package {
         debug_assert!(dir == path::absolute(dir).unwrap());
 
         let config_path = dir.join(Self::CONFIG_FILENAME);
-        let config: PackageConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
+        let config: PackageConfig = toml::from_str(&fs::read_to_string(config_path)?)?;
 
         Ok(Self {
             path: dir.into(),
@@ -335,7 +335,7 @@ impl Package {
     }
 
     fn author(&self) -> Option<&str> {
-        self.config.author.as_ref().map(|x| x.as_str())
+        self.config.author.as_deref()
     }
 
     fn readme(&self) -> Result<Option<String>> {
@@ -345,7 +345,7 @@ impl Package {
     fn entrypoints(&self) -> Result<Option<&Entrypoints>, globset::Error> {
         self.entrypoints
             .get_or_try_init(|| match &self.config.entrypoints {
-                Some(patterns_map) => build_entrypoints(patterns_map).map(|x| Some(x)),
+                Some(patterns_map) => build_entrypoints(patterns_map).map(Some),
                 None => Ok(None),
             })
             .map(|x| x.as_ref())
@@ -414,7 +414,7 @@ impl Package {
 
         // add versions
         for version in self.versions()?.iter() {
-            reapack.add_child(version.element(&repo, &self)?).unwrap();
+            reapack.add_child(version.element(repo, self)?).unwrap();
         }
 
         Ok(reapack)
@@ -435,7 +435,7 @@ impl Version {
         debug_assert!(dir == path::absolute(dir).unwrap());
 
         let config_path = dir.join(Self::CONFIG_FILENAME);
-        let config: VersionConfig = toml::from_str(&fs::read_to_string(&config_path)?)?;
+        let config: VersionConfig = toml::from_str(&fs::read_to_string(config_path)?)?;
 
         Ok(Self {
             path: dir.into(),
@@ -467,7 +467,7 @@ impl Version {
         let entrypoints = self
             .entrypoints
             .get_or_try_init(|| match &self.config.entrypoints {
-                Some(patterns_map) => build_entrypoints(patterns_map).map(|x| Some(x)),
+                Some(patterns_map) => build_entrypoints(patterns_map).map(Some),
                 None => Ok(None),
             })?;
         if entrypoints.is_some() {
@@ -540,7 +540,7 @@ impl Version {
         let sources = self.sources()?;
         for source in sources.iter() {
             version
-                .add_child(source.element(&repo, &pkg, &self)?)
+                .add_child(source.element(repo, pkg, self)?)
                 .unwrap();
         }
 
@@ -550,7 +550,7 @@ impl Version {
             if pkg_type == PackageType::Script {
                 let mut package_has_no_entrypoints = true;
                 for src in sources {
-                    let sections = src.sections(&pkg, &self)?;
+                    let sections = src.sections(pkg, self)?;
                     if !sections.is_empty() {
                         package_has_no_entrypoints = false;
                         break;
@@ -622,7 +622,7 @@ impl Source {
             repo,
             pkg,
             ver,
-            src: &self,
+            src: self,
         };
 
         Ok(template.render(&values)?)
@@ -642,7 +642,7 @@ impl Source {
         let result = RelativePathBuf::from_path(pkg.identifier().as_ref())
             .expect("package identifier cannot be an absolute path")
             .join(ver.name().as_ref())
-            .join(self.relpath_from_version(&ver));
+            .join(self.relpath_from_version(ver));
         debug_assert!(result == result.normalize());
         result
     }
@@ -702,7 +702,7 @@ impl Source {
             }
         }
         // push the normal expected output path
-        result.push(&self.output_relpath(&pkg, &ver));
+        result.push(&self.output_relpath(pkg, ver));
         result
     }
 
@@ -711,7 +711,7 @@ impl Source {
         source.add_text(self.url(repo, pkg, ver)?).unwrap();
         source.add_attribute(
             "file",
-            self.output_relpath_from_category(&pkg, &ver).as_ref(),
+            self.output_relpath_from_category(pkg, ver).as_ref(),
         );
 
         // TODO: Implement setting "type" attribute
@@ -729,7 +729,7 @@ impl Source {
 
     fn sections(&self, pkg: &Package, ver: &Version) -> Result<&HashSet<ActionListSection>> {
         self.sections.get_or_try_init(|| {
-            let entrypoints = ver.entrypoints(&pkg)?;
+            let entrypoints = ver.entrypoints(pkg)?;
             let pkg_type = pkg.r#type();
             if pkg_type == PackageType::Script {
                 let Some(entrypoints) = entrypoints else {
@@ -738,16 +738,14 @@ impl Source {
                 if entrypoints.iter().all(|(_, pattern)| pattern.is_empty()) {
                     return Err(NoEntrypointsDefinedForScriptPackage(pkg.path().into()).into());
                 }
-            } else {
-                if let Some(entrypoints) = entrypoints {
-                    if entrypoints.iter().any(|(_, pattern)| !pattern.is_empty()) {
-                        return Err(
-                            EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into()
-                        );
-                    }
+            } else if let Some(entrypoints) = entrypoints {
+                if entrypoints.iter().any(|(_, pattern)| !pattern.is_empty()) {
+                    return Err(
+                        EntrypointsOnlyAllowedInScriptPackages(pkg.path().into()).into()
+                    );
                 }
             }
-            let relpath_to_ver = self.relpath_from_version(&ver);
+            let relpath_to_ver = self.relpath_from_version(ver);
             let sections = match entrypoints {
                 Some(entrypoints) => entrypoints
                     .iter()

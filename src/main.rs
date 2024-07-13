@@ -6,13 +6,12 @@ mod version;
 use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use log::{debug, error, info, trace, warn};
+use log::{error};
 use repo::{Package, Repo};
 use std::{
     borrow::Cow,
     collections::HashSet,
-    fs::{self, File},
-    io::BufWriter,
+    fs::{self},
     path::{self, Path, PathBuf},
 };
 use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
@@ -138,7 +137,7 @@ fn main() -> Result<()> {
 
             let repo = repo::Repo::read(repo)?;
             let index = repo.generate_index()?;
-            fs::write(&output_path, &index)?;
+            fs::write(&output_path, index)?;
             println!("Wrote repository index to: {}", output_path.display());
         }
         Commands::Publish {
