@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use log::{error};
-use repo::{Package, Repo};
+use repo::{Package, Repository};
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -131,7 +131,7 @@ fn main() -> Result<()> {
                 output_path.into()
             };
 
-            let repo = repo::Repo::read(repo)?;
+            let repo = repo::Repository::read(repo)?;
             let index = repo.generate_index()?;
             fs::write(&output_path, index)?;
             println!("Wrote repository index to: {}", output_path.display());
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
             repo,
             new,
         } => {
-            let repo = Repo::read(repo)?;
+            let repo = Repository::read(repo)?;
 
             // check that the source path exists
             if !path.exists() {

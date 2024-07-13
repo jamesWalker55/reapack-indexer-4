@@ -157,14 +157,14 @@ fn build_entrypoints(
 }
 
 #[derive(Debug)]
-pub(crate) struct Repo {
+pub(crate) struct Repository {
     /// Must be an absolute path
     path: PathBuf,
     config: RepositoryConfig,
     git_hash: OnceCell<String>,
 }
 
-impl Repo {
+impl Repository {
     const CONFIG_FILENAME: &'static str = "repository.toml";
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
@@ -407,7 +407,7 @@ impl Package {
         Ok(result)
     }
 
-    fn element(&self, repo: &Repo) -> Result<XMLElement> {
+    fn element(&self, repo: &Repository) -> Result<XMLElement> {
         let mut reapack = XMLElement::new("reapack");
         reapack.add_attribute("desc", &self.name());
         reapack.add_attribute("type", (&self.r#type()).into());
@@ -538,7 +538,7 @@ impl Version {
         Ok(result)
     }
 
-    fn element(&self, repo: &Repo, pkg: &Package) -> Result<XMLElement> {
+    fn element(&self, repo: &Repository, pkg: &Package) -> Result<XMLElement> {
         let mut version = XMLElement::new("version");
         version.add_attribute("name", &self.name());
         version.add_attribute("author", pkg.author().unwrap_or(repo.author()));
@@ -580,7 +580,7 @@ impl Version {
 }
 
 struct UrlTemplateValueProvider<'a> {
-    repo: &'a Repo,
+    repo: &'a Repository,
     pkg: &'a Package,
     ver: &'a Version,
     src: &'a Source,
@@ -632,7 +632,7 @@ impl Source {
         &self.path
     }
 
-    fn url(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<String> {
+    fn url(&self, repo: &Repository, pkg: &Package, ver: &Version) -> Result<String> {
         let url_pattern = repo.url_pattern();
         // TODO: Find a way to not parse a new template from scratch for every source
         let template = Template::parse(url_pattern)?;
@@ -724,7 +724,7 @@ impl Source {
         result
     }
 
-    fn element(&self, repo: &Repo, pkg: &Package, ver: &Version) -> Result<XMLElement> {
+    fn element(&self, repo: &Repository, pkg: &Package, ver: &Version) -> Result<XMLElement> {
         let mut source = XMLElement::new("source");
         source.add_text(self.url(repo, pkg, ver)?).unwrap();
         source.add_attribute("file", self.output_relpath_from_category(pkg, ver).as_ref());
