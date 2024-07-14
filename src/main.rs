@@ -6,12 +6,13 @@ mod version;
 use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use log::{error};
+use log::error;
 use repo::{Package, Repository};
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self},
+    ops::Deref,
     path::{self, Path, PathBuf},
 };
 use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
@@ -23,8 +24,8 @@ use version::{find_latest_version, increment_version};
 pub(crate) struct RepositoryAlreadyExists(PathBuf);
 
 #[derive(Error, Debug)]
-#[error("package does not exist, please use `--new` to create a new package: `{0}`")]
-pub(crate) struct PackageDoesNotExist(PathBuf);
+#[error("package `{0}` does not exist, please use `--new` to create a new package")]
+pub(crate) struct PackageDoesNotExist(String);
 
 #[derive(Error, Debug)]
 #[error("package already exists: `{0}`")]
@@ -139,15 +140,15 @@ fn main() -> Result<()> {
         Commands::Publish {
             identifier,
             version: version_name,
-            path,
-            repo,
-            new,
+            path: source_path,
+            repo: repo_path,
+            new: should_create_new_package,
         } => {
-            let repo = Repository::read(repo)?;
+            let repo = Repository::read(repo_path)?;
 
             // check that the source path exists
-            if !path.exists() {
-                return Err(SourceDoesNotExist(path.into()).into());
+            if !source_path.exists() {
+                return Err(SourceDoesNotExist(source_path.into()).into());
             }
 
             // check that the identifier and version are sane
@@ -171,39 +172,21 @@ fn main() -> Result<()> {
                 }
             }
 
-            let pkg_path = repo.path().join(identifier);
-            let pkg_config_path = pkg_path.join("package.toml");
-            if *new {
-                if pkg_config_path.exists() {
-                    return Err(PackageAlreadyExists(pkg_path).into());
-                }
-
-                // create package dir
-                if !pkg_path.exists() {
-                    fs::create_dir(&pkg_path)?;
-                }
-
-                // create package config
-                let config_text = templates::generate_package_config(
-                    &PackageTemplateParams::default()
-                        .name(identifier)
-                        .identifier(identifier),
-                );
-                fs::write(&pkg_config_path, config_text)?;
-
-                println!("Created package {}", &identifier);
-                println!(
-                    "Please edit the package configuration: {}",
-                    &path::absolute(pkg_config_path)?.to_string_lossy()
-                );
+            // get or create the package
+            let pkg = if *should_create_new_package {
+                repo.add_package(&identifier)?
             } else {
-                // use existing repo
-                if !pkg_config_path.exists() {
-                    return Err(PackageDoesNotExist(pkg_path).into());
-                }
-            }
+                let packages = repo.packages()?;
+                let pkg = packages
+                    .iter()
+                    .find(|pkg| pkg.identifier() == identifier.as_str());
+                let Some(pkg) = pkg else {
+                    return Err(PackageDoesNotExist(identifier.into()).into());
+                };
+                pkg.clone()
+            };
 
-            let pkg = Package::read(&pkg_path)?;
+            // check that the version doesn't exist
             let versions = pkg.versions()?;
             let version_names: HashSet<_> = versions.iter().map(|x| x.name()).collect();
 
@@ -219,7 +202,7 @@ fn main() -> Result<()> {
                     None => "0.0.1".into(),
                 },
             };
-            let ver_path = pkg_path.join(&version_name);
+            let ver_path = pkg.path().join(&version_name);
             let ver_config_path = ver_path.join("version.toml");
 
             // create package dir
@@ -231,12 +214,12 @@ fn main() -> Result<()> {
 
             // copy the source to the version folder
             {
-                let metadata = path.metadata()?;
+                let metadata = source_path.metadata()?;
                 if metadata.is_dir() {
-                    copy_dir_all(path, ver_path)?;
+                    copy_dir_all(source_path, ver_path)?;
                 } else if metadata.is_file() {
-                    let dst_path = ver_path.join(path.file_name().unwrap());
-                    fs::copy(path, dst_path)?;
+                    let dst_path = ver_path.join(source_path.file_name().unwrap());
+                    fs::copy(source_path, dst_path)?;
                 }
             }
 

@@ -147,14 +147,14 @@ impl<'de> Deserialize<'de> for ActionListSection {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct RepositoryConfig {
     pub(crate) identifier: Option<String>,
     pub(crate) author: String,
     pub(crate) url_pattern: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct PackageConfig {
     pub(crate) name: Option<String>,
     pub(crate) category: RelativePathBuf,
@@ -165,7 +165,7 @@ pub(crate) struct PackageConfig {
     pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct VersionConfig {
     pub(crate) time: DateTime<Utc>,
     pub(crate) entrypoints: Option<HashMap<ActionListSection, Vec<String>>>,

@@ -1,6 +1,8 @@
 use leon::{Template, Values};
 use once_cell::sync::Lazy;
 
+use crate::config::PackageConfig;
+
 const REPOSITORY_STR: &str = include_str!("repository.toml");
 const PACKAGE_STR: &str = include_str!("package.toml");
 const VERSION_STR: &str = include_str!("version.toml");

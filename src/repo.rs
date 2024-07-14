@@ -15,8 +15,9 @@ use std::{
 use thiserror::Error;
 use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 
-use crate::config::{
-    ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig,
+use crate::{
+    config::{ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig},
+    templates::{self, PackageTemplateParams},
 };
 
 type Entrypoints = HashMap<ActionListSection, GlobSet>;
@@ -48,6 +49,14 @@ pub(crate) struct PandocNotInstalled;
 #[derive(Error, Debug)]
 #[error("pandoc returned unexpected output")]
 pub(crate) struct PandocOutputError;
+
+#[derive(Error, Debug)]
+#[error("package already exists: `{0}`")]
+pub(crate) struct PackageAlreadyExists(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("the path is a file: `{0}`")]
+pub(crate) struct PathIsAFile(PathBuf);
 
 /// Try to read an RTF file at the given path.
 /// If no RTF file is found, read and convert a Markdown file to RTF.
@@ -227,6 +236,35 @@ impl Repository {
         Package::discover_packages(self.path())
     }
 
+    pub(crate) fn add_package(&self, identifier: &str) -> Result<Package> {
+        let existing_packages = self.packages()?;
+        if let Some(pkg) = existing_packages
+            .iter()
+            .find(|pkg| pkg.identifier() == identifier)
+        {
+            return Err(PackageAlreadyExists(pkg.path().into()).into());
+        }
+
+        let target_path = {
+            let base_path = self.path().join(identifier);
+            if !base_path.exists() {
+                base_path
+            } else {
+                let mut i = 1;
+                loop {
+                    let numbered_path = self.path().join(format!("{}_{}", identifier, i));
+                    if !numbered_path.exists() {
+                        break numbered_path;
+                    }
+                    i += 1;
+                }
+            }
+        };
+
+        // TODO: Allow specifying config when creating package
+        Package::create_package(&target_path, None)
+    }
+
     pub(crate) fn generate_index(&self) -> Result<String> {
         let mut xml = XMLBuilder::new()
             .version(XMLVersion::XML1_1)
@@ -288,7 +326,7 @@ impl Repository {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Package {
     path: PathBuf,
     config: PackageConfig,
@@ -316,7 +354,7 @@ impl Package {
         })
     }
 
-    fn identifier(&self) -> Cow<str> {
+    pub(crate) fn identifier(&self) -> Cow<str> {
         if let Some(identifier) = &self.config.identifier {
             identifier.into()
         } else {
@@ -324,7 +362,7 @@ impl Package {
         }
     }
 
-    fn name(&self) -> Cow<str> {
+    pub(crate) fn name(&self) -> Cow<str> {
         if let Some(name) = &self.config.name {
             name.into()
         } else {
@@ -332,27 +370,27 @@ impl Package {
         }
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    fn category(&self) -> &RelativePath {
+    pub(crate) fn category(&self) -> &RelativePath {
         &self.config.category
     }
 
-    fn pkg_type(&self) -> PackageType {
+    pub(crate) fn pkg_type(&self) -> PackageType {
         self.config.pkg_type.clone()
     }
 
-    fn author(&self) -> Option<&str> {
+    pub(crate) fn author(&self) -> Option<&str> {
         self.config.author.as_deref()
     }
 
-    fn readme(&self) -> Result<Option<String>> {
+    pub(crate) fn readme(&self) -> Result<Option<String>> {
         read_rtf_or_md_file(&self.path.join("README.rtf"))
     }
 
-    fn entrypoints(&self) -> Result<Option<&Entrypoints>, globset::Error> {
+    pub(crate) fn entrypoints(&self) -> Result<Option<&Entrypoints>, globset::Error> {
         self.entrypoints
             .get_or_try_init(|| match &self.config.entrypoints {
                 Some(patterns_map) => build_entrypoints(patterns_map).map(Some),
@@ -363,6 +401,32 @@ impl Package {
 
     pub(crate) fn versions(&self) -> Result<Vec<Version>> {
         Version::discover_versions(self.path())
+    }
+
+    fn create_package(path: &Path, config: Option<PackageTemplateParams>) -> Result<Package> {
+        let path = path::absolute(path)?;
+
+        // check if package already exists
+        if path.exists() {
+            let metadata = path.metadata()?;
+            if !metadata.is_dir() {
+                return Err(PathIsAFile(path.into()).into());
+            }
+        } else {
+            fs::create_dir(&path)?;
+        }
+        let config_path = path.join(Self::CONFIG_FILENAME);
+        if config_path.exists() {
+            return Err(PackageAlreadyExists(path.into()).into());
+        }
+
+        // create package config
+        let config_text =
+            templates::generate_package_config(&config.unwrap_or(PackageTemplateParams::default()));
+        fs::write(&config_path, config_text)?;
+
+        // read the package
+        Self::read(&path)
     }
 
     fn discover_packages(dir: &Path) -> Result<Vec<Package>> {
