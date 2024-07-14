@@ -18,6 +18,7 @@ use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 use crate::{
     config::{ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig},
     templates::{self, PackageTemplateParams},
+    version::find_latest_version,
 };
 
 type Entrypoints = HashMap<ActionListSection, GlobSet>;
@@ -57,6 +58,10 @@ pub(crate) struct PackageAlreadyExists(PathBuf);
 #[derive(Error, Debug)]
 #[error("the path is a file: `{0}`")]
 pub(crate) struct PathIsAFile(PathBuf);
+
+#[derive(Error, Debug)]
+#[error("unable to parse this version string, please specify the new version manually: {0}")]
+pub(crate) struct UnknownVersionFormat(String);
 
 /// Try to read an RTF file at the given path.
 /// If no RTF file is found, read and convert a Markdown file to RTF.
@@ -403,6 +408,14 @@ impl Package {
         Version::discover_versions(self.path())
     }
 
+    pub(crate) fn latest_version(&self) -> Result<Option<Version>> {
+        Ok(self
+            .versions()?
+            .iter()
+            .max_by(|a, b| Version::compare_version_names(&a.name(), &b.name()))
+            .cloned())
+    }
+
     fn create_package(path: &Path, config: Option<PackageTemplateParams>) -> Result<Package> {
         let path = path::absolute(path)?;
 
@@ -495,7 +508,7 @@ impl Package {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Version {
     path: PathBuf,
     config: VersionConfig,
@@ -504,6 +517,56 @@ pub(crate) struct Version {
 
 impl Version {
     const CONFIG_FILENAME: &'static str = "version.toml";
+
+    /// Splits version names by dots '.', then compares each segment.
+    pub(crate) fn compare_version_names(version_a: &str, version_b: &str) -> std::cmp::Ordering {
+        for entry in version_a.split('.').zip_longest(version_b.split('.')) {
+            match entry {
+                itertools::EitherOrBoth::Both(part_a, part_b) => match part_a
+                    .partial_cmp(part_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                {
+                    // comparison is equal, don't return, keep iterating
+                    std::cmp::Ordering::Equal => (),
+                    // otherwise, return that order (greater/less)
+                    order => return order,
+                },
+                // if one version is longer, return that one
+                itertools::EitherOrBoth::Left(_part_a) => return std::cmp::Ordering::Greater,
+                itertools::EitherOrBoth::Right(_part_b) => return std::cmp::Ordering::Less,
+            };
+        }
+        std::cmp::Ordering::Equal
+    }
+
+    pub(crate) fn increment_version(text: &str) -> Result<String, UnknownVersionFormat> {
+        let text = text.to_string();
+
+        let suffix = {
+            let mut suffix = String::new();
+            for c in text.chars().rev() {
+                // if found non-digit char, stop the loop
+                if c.is_ascii_digit() {
+                    suffix.push(c);
+                } else {
+                    break;
+                }
+            }
+            if suffix.is_empty() {
+                return Err(UnknownVersionFormat(text));
+            }
+            suffix = suffix.chars().rev().collect();
+            Ok(suffix)
+        }?;
+
+        // Parse the suffix to an integer
+        let incremented_suffix = suffix.parse::<u32>().unwrap() + 1;
+
+        // Create the new version string
+        let prefix_len = text.len() - suffix.len();
+
+        Ok(format!("{}{}", &text[..prefix_len], incremented_suffix))
+    }
 
     pub(crate) fn read(dir: &Path) -> Result<Self> {
         debug_assert!(

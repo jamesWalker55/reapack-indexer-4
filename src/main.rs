@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use log::error;
-use repo::{Package, Repository};
+use repo::{Package, Repository, Version};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -17,7 +17,6 @@ use std::{
 };
 use templates::{PackageTemplateParams, RepositoryTemplateParams, VersionTemplateParams};
 use thiserror::Error;
-use version::{find_latest_version, increment_version};
 
 #[derive(Error, Debug)]
 #[error("repository already exists: `{0}`")]
@@ -188,17 +187,20 @@ fn main() -> Result<()> {
 
             // check that the version doesn't exist
             let versions = pkg.versions()?;
-            let version_names: HashSet<_> = versions.iter().map(|x| x.name()).collect();
-
             let version_name: String = match version_name {
                 Some(version_name) => {
-                    if version_names.contains(version_name.as_str()) {
+                    let existing_version =
+                        versions.iter().find(|v| v.name() == version_name.as_str());
+                    if existing_version.is_some() {
                         return Err(VersionAlreadyExists(version_name.into()).into());
                     }
                     version_name.into()
                 }
-                None => match find_latest_version(version_names.iter().map(|x| x.as_ref())) {
-                    Some(latest_version) => increment_version(latest_version)?,
+                None => match versions
+                    .iter()
+                    .max_by(|a, b| Version::compare_version_names(&a.name(), &b.name()))
+                {
+                    Some(latest_version) => Version::increment_version(&latest_version.name())?,
                     None => "0.0.1".into(),
                 },
             };

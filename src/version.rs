@@ -1,6 +1,8 @@
 use itertools::Itertools;
 use thiserror::Error;
 
+use crate::repo::Version;
+
 #[derive(Error, Debug)]
 #[error("unable to parse this version string, please specify the new version manually: {0}")]
 pub(crate) struct UnknownVersionFormat(String);
@@ -38,24 +40,8 @@ pub(crate) fn find_latest_version<'a, I>(versions: I) -> Option<&'a str>
 where
     I: Iterator<Item = &'a str>,
 {
-    versions.max_by(|version_a, version_b| {
-        for entry in version_a.split('.').zip_longest(version_b.split('.')) {
-            match entry {
-                itertools::EitherOrBoth::Both(part_a, part_b) => match part_a
-                    .partial_cmp(part_b)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                {
-                    // comparison is equal, don't return, keep iterating
-                    std::cmp::Ordering::Equal => (),
-                    // otherwise, return that order (greater/less)
-                    order => return order,
-                },
-                // if one version is longer, return that one
-                itertools::EitherOrBoth::Left(_part_a) => return std::cmp::Ordering::Greater,
-                itertools::EitherOrBoth::Right(_part_b) => return std::cmp::Ordering::Less,
-            };
-        }
-        std::cmp::Ordering::Equal
+    versions.max_by(|version_a: &&'a str, version_b: &&'a str| {
+        Version::compare_version_names(*version_a, *version_b)
     })
 }
 
