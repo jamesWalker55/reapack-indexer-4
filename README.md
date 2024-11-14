@@ -12,7 +12,7 @@ my-first-package/
     0.0.2/
         My First Script.lua
         version.toml
-        CHANGELOG.md
+        CHANGELOG.txt
     package.toml
     README.md
 my-other-cool-package/
@@ -22,7 +22,7 @@ my-other-cool-package/
     0.0.2/
         My Other Script.lua
         version.toml
-        CHANGELOG.md
+        CHANGELOG.txt
     package.toml
     README.md
 README.md
