@@ -18,7 +18,6 @@ use xml_builder::{XMLBuilder, XMLElement, XMLVersion};
 use crate::{
     config::{ActionListSection, PackageConfig, PackageType, RepositoryConfig, VersionConfig},
     templates::{self, PackageTemplateParams},
-    version::find_latest_version,
 };
 
 type Entrypoints = HashMap<ActionListSection, GlobSet>;
@@ -93,6 +92,14 @@ fn read_rtf_or_md_file(path: &Path) -> Result<Option<String>> {
     }
 
     Ok(None)
+}
+
+fn read_txt_file(path: &Path) -> Result<Option<String>> {
+    if path.exists() {
+        Ok(Some(fs::read_to_string(path)?))
+    } else {
+        Ok(None)
+    }
 }
 
 fn cdata(text: &str) -> String {
@@ -599,7 +606,7 @@ impl Version {
     }
 
     pub(crate) fn changelog(&self) -> Result<Option<String>> {
-        read_rtf_or_md_file(&self.path.join("CHANGELOG.rtf"))
+        read_txt_file(&self.path.join("CHANGELOG.txt"))
     }
 
     pub(crate) fn entrypoints<'a>(
