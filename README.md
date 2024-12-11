@@ -87,8 +87,8 @@ The contents of `index.xml`:
 	<category name="Category">
 		<reapack desc="my-first-package" type="script" name="my-first-package">
 			<version name="0.0.1" author="Your Name" time="2024-07-12T13:20:22.214444900+00:00">
-				<source file="../my-first-package/0.0.1/My Cool Script.lua" main="main">https://raw.githubusercontent.com/jamesWalker55/reaper-scripting-5-index/a9e6bed9dd02148514b6e6ebf407c7740e2e3375/my-first-package/0.0.1/My Cool Script.lua</source>
-				<source file="../my-first-package/0.0.1/version.toml">https://raw.githubusercontent.com/jamesWalker55/reaper-scripting-5-index/a9e6bed9dd02148514b6e6ebf407c7740e2e3375/my-first-package/0.0.1/version.toml</source>
+				<source file="../my-first-package/My Cool Script.lua" main="main">https://raw.githubusercontent.com/jamesWalker55/reaper-scripting-5-index/a9e6bed9dd02148514b6e6ebf407c7740e2e3375/my-first-package/0.0.1/My Cool Script.lua</source>
+				<source file="../my-first-package/version.toml">https://raw.githubusercontent.com/jamesWalker55/reaper-scripting-5-index/a9e6bed9dd02148514b6e6ebf407c7740e2e3375/my-first-package/0.0.1/version.toml</source>
 			</version>
 		</reapack>
 	</category>

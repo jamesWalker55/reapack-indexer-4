@@ -787,13 +787,12 @@ impl Source {
         self.path.relative_to(ver.path()).unwrap()
     }
 
-    /// The desired output path of this source file, relative to the root of a folder. E.g. `"my-package/0.0.1/foo/index.lua"`
+    /// The desired output path of this source file, relative to the root of a folder. E.g. `"my-package/foo/index.lua"`
     ///
     /// Note: This does NOT consider the subfolders created by the package category. Use [Source::output_relpath_from_category] instead.
     fn output_relpath(&self, pkg: &Package, ver: &Version) -> RelativePathBuf {
         let result = RelativePathBuf::from_path(pkg.identifier().as_ref())
             .expect("package identifier cannot be an absolute path")
-            .join(ver.name().as_ref())
             .join(self.relpath_from_version(ver));
         debug_assert!(result == result.normalize());
         result
@@ -839,7 +838,7 @@ impl Source {
         }
     }
 
-    /// The 'file' attribute of the Element. A relative path from the Category folder to the source's target location. E.g. `"my-package/0.0.1/foo/index.lua"`
+    /// The 'file' attribute of the Element. A relative path from the Category folder to the source's target location. E.g. `"../my-package/foo/index.lua"`
     fn output_relpath_from_category(&self, pkg: &Package, ver: &Version) -> RelativePathBuf {
         let mut result = RelativePathBuf::new();
         // prepend '..' for each segment in category
